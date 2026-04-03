@@ -1,0 +1,1693 @@
+
+
+===== PAGE 1 =====
+A cross-domain few-shot remaining useful life estimation framework based 
+on model-agnostic meta-learning with task embeddings
+Xinyu Shang
+a
+, Jie Shang
+a
+, Mingyu Li
+b
+, Haobo Qiu
+a , *
+, Liang Gao
+a
+, Danyang Xu
+a
+a
+State Key Laboratory of Intelligent Manufacturing Equipment and Technology, School of Mechanical Science and Engineering, Huazhong University of Science & 
+Technology, Wuhan 430074, PR China
+b
+Wuhan Second Ship Design and Research Institute, Wuhan 430205, PR China
+ARTICLE INFO
+Keywords:
+Cross-domain few-shot prognostic scenarios
+Extremely few labeled samples
+Improved model-agnostic meta-learning
+Remaining useful life estimation
+ABSTRACT
+Remaining useful life (RUL) estimation aims to predict the time until system failure based on monitoring data, 
+facilitating proactive maintenance actions. Precise RUL estimation can significantly enhance system reliability 
+and safety. However, when new system failures emerge, predictive models trained on historical failures data 
+often encounter difficulties in accurate estimation. The distribution shift between historical and new failures 
+data, coupled with extremely few new failures data, results in cross-domain few-shot prognostic scenarios, posing 
+a significant challenge to many deep-learning-based RUL estimation methods. In response to the challenge, this 
+paper proposes a novel cross-domain few-shot RUL estimation framework based on model-agnostic meta- 
+learning (MAML) with task embeddings. First, a segmentation strategy is adopted to construct more meta-tasks, 
+which can capture more comprehensive degradation information for efficient meta knowledge extraction. Then, 
+task embeddings that are independent of backbone network are designed to encode task-specific degradation 
+knowledge into efficient low-dimensional vectors, which alleviates overfitting caused by limited labeled data, 
+thus improving RUL estimation performance. Moreover, the encoded degradation knowledge is only injected into 
+feature extractor, making representation change dominant for better cross-domain adaptability. Experimental 
+results on turbofan engine and wind turbine gearbox datasets reveal the effectiveness and superiority of the 
+proposed framework. Estimation results evaluated by RMSE and Score improve 9 % and 31 %, respectively.
+1. Introduction
+Prognostics and health management (PHM) technology aims to 
+accurately predict the health state of mechanical systems and perform 
+reasonable maintenance and management based on the health state, 
+which can effectively ensure the safety, reliability and economy of sys -
+tem operation ( M ´arquez et al., 2023; Li et al., 2023; Souza et al., 2023 ). 
+As a key component of PHM ( Camci, Chinnam, 2010 ), remaining useful 
+life (RUL) estimation involves the analysis of monitoring data or the 
+formulation of degradation models to predict machinery RUL ( Soualhi 
+et al., 2023 ). The accurate RUL estimation of machinery allows the 
+timely improvement of maintenance plans to ensure the smooth prog -
+ress of industrial activities, as well as reduce maintenance costs, thereby 
+significantly improving the reliability and safety of machinery 
+( Schwartz et al., 2022 ). Recently, deep learning methods such as 
+convolution neural networks (CNNs) ( Li et al., 2018; Al-Dulaimi et al., 
+2019 ), long short-term memory (LSTM) ( Zhang et al., 2019; 
+Calvo-Bascones and Sanz-Bobi, 2023 ), gated recurrent units (GRUs) 
+( Luo et al., 2020 ), neural turing machines (NTMs) ( Falcon et al., 2022 ), 
+attention mechanism ( Xu et al., 2022; Du et al., 2023 ), and variational 
+auto-encoders ( Ping et al., 2019 ) have achieved satisfactory perfor -
+mance for the RUL estimation of mechanical systems. However, in most 
+previous deep-learning-based methods, historical (base) and current 
+(novel) domain monitoring data are assumed to have similar distribu -
+tions, which is inconsistent with cross-domain PHM applications ( Costa 
+et al., 2020 ). Distribution shift always exists across historical and cur -
+rent domains because of different operational conditions, fault modes, 
+and system noise.
+In response to the above cross-domain scenarios, transfer learning 
+(TL) has been employed as an effective way of transferring the knowl -
+edge learned in the historical domain to the current domain. It focuses 
+on building models that can fulfil the tasks of the current domain by 
+learning knowledge from a semantically related but differently distrib -
+uted historical domain ( Zhang and Gao, 2024 ). Fu et al. (2021)
+* Corresponding author.
+E-mail address: hobbyqiu@mail.hust.edu.cn (H. Qiu). 
+Contents lists available at ScienceDirect
+Computers in Industry
+journal homepag e: www.sci encedirect.co m/journa l/computers-i n-industry
+https://doi.org/10.1016/j.compind.2025.104396
+Received 26 August 2024; Received in revised form 17 September 2025; Accepted 17 September 2025  
+Computers in Industry 173 (2025) 104396 
+Available online 9 October 2025 
+0166-3615/© 2025 Elsevier B.V. All rights are reserved, including those for text and data mining, AI training, and similar technologies. 
+
+===== PAGE 2 =====
+simultaneously integrated the multi-kernel maximum mean discrepancy 
+and adversarial mechanisms to reduce the domain discrepancy for better 
+cross-domain performance. Lu et al. (2025) designed a 
+pseudo-label-guided domain adversarial network with a dynamic pen -
+alty term to dynamically adjust the conditional distribution during joint 
+distribution alignment. Nejjar et al. (2024) aligned the operation profile 
+to execute domain adaptation for better RUL estimation. Most of the 
+abovementioned methods belong to the category of domain adaptation 
+or transductive TL ( Pan and Yang, 2010 ), and are often used in scenarios 
+where available data in the current domain is sufficient and unlabeled 
+( Fan et al., 2020 ). However, when the data from the current domain is 
+insufficient and labeled, that is, cross-domain few-shot RUL estimation 
+scenarios, the performance of these transductive TL methods might be 
+limited as they do not utilize any supervised information from the cur -
+rent domain.
+In contrast, inductive TL ( Pan and Yang, 2010 ) methods are more 
+effective in cross-domain few-shot scenarios. They can utilize the su -
+pervised degradation information from some of the labeled data in the 
+current domain to induce an objective predictive model. 
+Pretrain-finetune is a typical inductive TL strategy. Zhang et al. (2018)
+and Gribbestad et al. (2021) employed LSTM networks to construct 
+pretrain-finetune-based frameworks for cross-domain few-shot RUL 
+estimation. Although pretrain-finetune approaches have achieved good 
+results in some easy RUL estimation scenarios, performance limitation 
+or even negative transfer may occur in cases of considerable domain 
+divergences ( Yang et al., 2022 ). Meta-learning is another promising way 
+of adopting the inductive TL setting to address the cross-domain few- -
+shot RUL estimation issue, which enables model generalization from 
+limited data by learning the meta knowledge shared among tasks. 
+Model-agnostic meta-learning (MAML) ( Finn et al., 2017 ) has attracted 
+attention within the field of RUL estimation in recent years as a general 
+meta-learning algorithm. Ding et al. (2021) leveraged MAML to develop 
+multiple meta-learning prognostic structures based on CNN and GRU. 
+Mo et al. (2023) constructed pseudo-meta-RUL tasks and employed 
+MAML for the RUL estimation of aircraft engines. However, there are 
+still some limitations in these cross-domain few-shot RUL estimation 
+frameworks using the MAML.
+(1) These frameworks typically construct the support set of a meta- 
+task using trajectories from the base domain. However, in industrial 
+scenarios, the insufficient number of available trajectories can hinder 
+efficient meta-knowledge extraction during meta-training, potentially 
+reducing model accuracy.
+(2) These frameworks update the entire model using few labeled 
+samples to learn task-specific degradation knowledge in the adaptation 
+process. However, computing gradients in a high-dimensional param -
+eter space using limited samples may cause overfitting.
+(3) These frameworks rely on representation reuse for adaptation. 
+However, its success depends on the similarity between base and novel 
+domains, and the restricted change in the feature space of degradation 
+representations can limit model adaptability in cross-domain scenarios.
+To tackle the aforementioned challenges, a cross-domain few-shot 
+RUL estimation framework based on an improved MAML is proposed in 
+this study. The major contributions of this paper are summarized as 
+follows. 
+• A segmentation strategy is specifically designed for constructing 
+meta-tasks by dividing a single trajectory into several sub- 
+trajectories. The innovative strategy significantly increases the 
+number of meta-tasks, enabling meta-learning algorithms to derive 
+more generalized meta knowledge from the expanded meta-tasks.
+• Task embeddings are developed to refine the MAML algorithm for 
+RUL estimation scenarios. Instead of updating the entire predictive 
+model parameters, only the task embeddings are updated based on a 
+few labeled samples in the adaptation process. This targeted update 
+allows for the acquisition of task-specific degradation knowledge by 
+computing gradients in a low-dimensional parameter space, 
+effectively reducing the risk of overfitting in scenarios with limited 
+labeled samples.
+• Representation change is employed as the main adaptation strategy 
+instead of representation reuse by exclusively linking task embed -
+dings with the feature extractor. In this new way, the feature space of 
+the extracted degradation representations can be significantly 
+changed to adapt to new RUL estimation tasks, thereby significantly 
+enhancing the model cross-domain adaptability.
+The remainder of this paper is structured as follows. Section 2 out -
+lines the relevant theoretical backgrounds. Section 3 describes the pro -
+posed RUL estimation framework in detail. In Sections 4, 5, 6, and 7 , the 
+experimental results are analyzed from various perspectives to deter -
+mine the superiority and effectiveness of the proposed framework. 
+Finally, Sections 8 and 9 respectively present the discussions and the 
+conclusions.
+2. Theoretical backgrounds
+2.1. Meta-learning
+Meta-learning aims to make models "learning to learn" by utilizing 
+episodic training paradigm ( Wang et al., 2020; Ma et al., 2022 ). The 
+objective is to learn a learning strategy, often termed as meta knowl -
+edge, from the base domain, enabling models to adapt to tasks with a 
+few labeled samples in the novel domain. To achieve the learning 
+strategy, a series of meta-tasks in the base domain are constructed to 
+simulate the testing circumstance in the novel domain where only a 
+handful of labeled samples are available. The distinct mechanism of 
+meta-learning empower the model with powerful generalization capa -
+bility in the novel domain ( Feng et al., 2022 ). Each base domain 
+meta-task and each novel domain task are both composed of a support 
+set and a query set. A series of base domain meta-tasks constitutes the 
+meta-training set D
+train
+=
+{
+T
+train
+i
+}
+Num
+i = 1
+=
+{(
+D
+train
+s , i
+, D
+train
+q , i
+) }
+Num
+i = 1 
+and a series 
+of novel domain tasks constitutes the meta-testing set D
+test
+=
+{
+T
+test
+j
+}
+num
+j = 1
+=
+{(
+D
+test
+s , j
+, D
+test
+q , j
+) }
+num
+j = 1
+, where Num refers to the number of base 
+domain meta-tasks, num refers to the number of novel domain tasks, s 
+represent the support set and q represent the query set.
+Meta-learning algorithms generally are performed via two types of 
+learners. Meta learner learns meta knowledge across a distribution of 
+tasks such as a metric space, a good initialization, and task representa -
+tions. Base learner utilizes the meta knowledge to quickly learn task- 
+specific knowledge with limited labeled samples ( Baik et al., 2020b ).
+2.2. Model-agnostic meta-learning
+Model-agnostic meta-learning (MAML) is a gradient-based meta- 
+learning algorithm proposed by Finn et al. (2017) , where the meta 
+learner obtains a common initialization among tasks by gradient 
+descent. It is called model agnostic because it can be used with different 
+network structures and loss functions.
+MAML performs optimization in two phases: meta-training phase 
+and meta-testing phase as shown in Fig. 1 . Meta-training learns a good 
+initialization from the base domain, enabling meta-testing to accomplish 
+rapid adaptation to new tasks with a few labeled samples from the novel 
+domain. In the meta-training phase, MAML is updated with an inter -
+leaved training procedure comprised of the inner and outer loop, which 
+is implemented on a batch of meta-tasks 
+{
+T
+train
+i
+}
+M
+i = 1
+=
+{(
+D
+train
+s , i
+, D
+train
+q , i
+) }
+M
+i = 1
+at each iteration, where M is the meta batch-size. In 
+the inner loop, each base learner is optimized by one or more gradient 
+update steps on the support set D
+train
+s , i
+to learn task-specific knowledge 
+as: 
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+2 
+
+===== PAGE 3 =====
+θ
+ʹ
+i
+← θ   α
+inner
+⋅ ∇
+θ
+L ( θ , D
+train
+s , i
+) , (1) 
+where θ is the initial parameters, θ
+ʹ
+i 
+is the updated parameters corre -
+sponding to the base learner of meta-task T
+train
+i 
+and α
+inner 
+is the learning 
+rate of the inner loop. In the outer loop, the meta learner synthesizes 
+multiple losses of the updated base learners and applies one meta- 
+gradient update step via (2) to obtain a good initialization: 
+θ ← θ   α
+outer
+⋅ ∇
+θ
+1
+M
+∑
+M
+i = 1
+L ( θ
+ʹ
+i
+, D
+train
+q , i
+) , (2) 
+where α
+outer 
+is the learning rate of the outer loop.
+In the meta-testing phase, the adaptation process and the evaluation 
+process are performed. For the j th new task, the model accomplishes 
+adaptation by one or more gradient update steps on the support set D
+test
+s , j 
+based on the optimized initialization θ : 
+θ
+ʹ
+j
+← θ   α
+inner
+⋅ ∇
+θ
+L ( θ , D
+test
+s , j
+) , (3) 
+Subsequently, model evaluation is conducted on the query sets D
+test
+q , j
+.
+In summary, MAML aims to find an effective initialization that may 
+not achieve optimal performance in the tasks during the meta-training 
+phase, but facilitates rapid adaptation to new tasks during the meta- 
+testing phase.
+3. Proposed framework for RUL estimation
+3.1. Problem description
+RUL estimation of mechanical systems is a regression problem. The 
+features extracted from the multi-sensor monitoring data are used to 
+form the inputs X
+d
+≜
+{
+x
+d , 1
+, x
+d , 2
+, … , x
+d , t
+d
+}
+and the corresponding RUL 
+values are used to form the outputs, where t
+d 
+means the number of 
+recorded time points in the d th mechanical system. The model needs to 
+learn the mapping relationship between the inputs and the outputs by 
+training data and then is applied for real-time monitoring data of me -
+chanical systems to predict accurate future failure time.
+In prognostic applications, particularly when dealing with complex 
+mechanical systems, practitioners frequently encounter cross-domain 
+few-shot scenarios. A chronological overview of cross-domain few-shot 
+prognostic scenarios is depicted in Fig. 2 . The predictive models F
+B
+( ⋅ ) are 
+first developed in Stage 1 using historical data with available labels 
+( D
+train 
+from the base domain). During Stage 2, the equipment is deployed 
+to the application. In this stage, new faults could emerge and unlabeled 
+data can be observed. Subsequently, the transition to Stage 3 occurs with 
+the first batch occurrence of failures ( Fan et al., 2020 ), where few 
+labeled data with new faults ( D
+test
+s 
+from the novel domain) are available, 
+i.e., few-shot. Based on the degradation information from F
+B
+( ⋅ ) , these 
+few labeled data are employed to induce new predictive models F
+N
+( ⋅ ) for 
+better adaptation to new faults (i.e., cross-domain few-shot scenarios).
+To provide further clarification, the following are the symbols defi -
+nitions for the problem description. In cross-domain few-shot scenarios, 
+labeled samples are extremely few (only K ) when novel domain 
+emerges. Therefore, the supervised information in the base domain with 
+relatively sufficient data should be extracted to enhance the model 
+generalization ability in the novel domain. Because RUL labels of all 
+time points in one trajectory are usually obtained concurrently after 
+failure, it is more practical to treat each run-to-failure trajectory as one 
+few-shot unit. The base domain training data is denoted as D
+train
+=
+{(
+x
+train
+d , 1
+, RUL
+train
+d , 1
+)
+,
+(
+x
+train
+d , 2
+, RUL
+train
+d , 2
+)
+, … ,
+(
+x
+train
+d , t
+d
+, RUL
+train
+d , t
+d
+) }
+T
+d = 1
+, 
+where T represents the total number of run-to-failure trajectories in the 
+base domain. For the j th task in the novel domain, it is assumed that 
+there exists a limited number of run-to-failure trajectories represented as 
+D
+test
+s , j
+=
+{(
+x
+test
+d , 1
+, RUL
+test
+d , 1
+)
+,
+(
+x
+test
+d , 2
+, RUL
+test
+d , 2
+)
+, … ,
+(
+x
+test
+d , t
+d
+, RUL
+test
+d , t
+d
+) }
+K
+d = 1
+, 
+where K represents the total number of run-to-failure trajectories in the 
+novel domain. The problem is to predict the RUL values of recently 
+produced or existing truncated trajectories in the novel domain by 
+leveraging the information gleaned from the base domain trajectories 
+alongside the K novel domain trajectories. Regarding the issue, after 
+capturing meta degradation knowledge in the base domain via meta- 
+learning, task adaptation is accomplished by only K run-to-failure tra -
+jectories in the novel domain and the RUL of truncated test trajectories 
+are predicted.
+3.2. Prognostic scheme
+The cross-domain few-shot RUL estimation framework developed in 
+this paper is composed of two main stages: the meta-tasks construction 
+and meta-learning stages, as illustrated in Fig. 3 . In the first stage, a 
+series of meta-tasks is constructed and enriched by segmentation. In the 
+second stage, MAML with task embeddings is employed to perform 
+meta-training and meta-testing, where the task embeddings are 
+designed to mitigate overfitting, and representation change is adopted 
+as the main adaptation strategy to improve cross-domain adaptability.
+3.2.1. Meta-tasks construction
+To construct a series of meta-tasks that can simulate the testing 
+circumstance in the novel domain, T trajectories in the base domain are 
+Fig. 1. The schematic diagram of MAML.
+Fig. 2. The chronological overview of cross-domain few-shot prognostic scenarios.
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+3 
+
+===== PAGE 4 =====
+divided equally into two parts, where each part contains T /2 trajec -
+tories. K trajectories are then randomly and non-repetitively sampled 
+from the first part as the support set of a meta-task. Various truncation 
+points are randomly and non-repetitively selected in the trajectories 
+from the second part as the query set of the meta-task. A series of meta- 
+tasks is constructed by repeating the above operation. However, if there 
+is an inadequate number of trajectories from the base domain, the 
+constructed meta-tasks may be not enough for efficient learning by the 
+meta-learning algorithm to learn good meta knowledge.
+In view of the above situation, a segmentation strategy is adopted for 
+meta-tasks construction. One run-to-failure trajectory is divided equally 
+into P segments and one point is sampled randomly and non-repetitively 
+in each segment. These sampled points are then grouped together to 
+form a sub-trajectory. Through segmentation, multiple sub-trajectories 
+are obtained from one trajectory and K sub-trajectories are randomly 
+selected to construct the support set of the meta-task, which increases 
+the number of meta-tasks and thus offers more degradation information 
+for meta knowledge extraction during meta-training. Notably, the pro -
+posed segmentation strategy, while theoretically similar to random 
+sampling techniques used to generate varied training samples, is distinct 
+in both its function and application within meta-learning-based RUL 
+estimation framework. In contrast to typical random sampling strategies 
+that often divide data without preserving its chronological integrity, the 
+proposed method strategically divides degradation trajectories to ensure 
+that each sub-trajectory consistently represents a complete phase of the 
+degradation process. This is crucial for maintaining the integrity of each 
+stage within the sub-trajectories, providing a solid foundation for 
+effective meta-training.
+3.2.2. Model-agnostic meta-learning with task embeddings
+The MAML-based RUL estimation frameworks always update all the 
+predictive model parameters in the adaptation process using a handful 
+of data. In this way, task-specific knowledge is encoded in a high- 
+dimensional parameter space using only limited samples, which leads 
+to overfitting ( Mishra et al., 2018 ). In contrast, encoding task-specific 
+knowledge in an additional low-dimensional parameter space can 
+effectively alleviate overfitting and improve the generalization of pre -
+dictive models when the labeled data is limited ( Rusu et al., 2019; 
+Zintgraf et al., 2019; Flennerhag et al., 2020 ). Based on this theory, the 
+task embeddings in our algorithm, kind of additional parameters, are 
+Fig. 3. The flowchart of the proposed framework.
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+4 
+
+===== PAGE 5 =====
+designed to improve the few-shot RUL estimation performance. Task 
+embeddings are efficient low-dimensional vectors that are optimized in 
+the inner loop and the adaptation process to learn task-specific degra -
+dation knowledge. As shown in Fig. 4 , task embeddings φ and shared 
+meta-parameters θ constitute the entire predictive model, where task 
+embeddings φ infuse encoded task-specific degradation knowledge into 
+the meta-parameters θ via feature-wise linear modulation (FiLM) ( Perez 
+et al., 2018 ), as shown in Fig. 5 . FiLM affects the output of the network 
+by adaptively performing a simple, feature-wise affine transformation of 
+the intermediate features. Consequently, the embeddings can efficiently 
+manipulate the intermediate features of the meta-parameters in a se -
+lective and meaningful manner using FiLM layers. Specifically, consid -
+ering a convolutional layer output feature map 
+{
+f
+l
+}
+L
+l = 1 
+with L channels, 
+the output of the l th channel after being connected to the embeddings 
+can be expressed as: FiLM ( f
+l
+) = γ
+l
+f
+l
++ β
+l
+, where γ , β ∈ R
+L 
+are the trans -
+formations of the embeddings. The fully-connected layers, which are 
+denoted as transformation layers in Fig. 4 , are employed to implement 
+the transformation. The first half of the output represents γ and the 
+second half of the output represents β . In addition, it should be noted 
+that the proposed algorithm remains model agnostic, which means that 
+the backbone shown in Fig. 4 has the flexibility to be substituted with 
+alternative model architectures.
+In the inner loop and adaptation process, φ are updated by the base 
+learner in one or more gradient update steps to learn task-specific 
+degradation knowledge as: 
+φ
+i
+← φ   α
+inner
+⋅ ∇
+φ
+L ( θ , φ , D
+t
+s , i
+) , (4) 
+where t = train implies in the inner loop and t = test implies in the 
+adaptation process. Additionally, L represents the mean squared error 
+(MSE) loss between the estimated RUL and actual RUL. In the outer loop, 
+θ is updated explicitly by the meta learner in one meta-gradient update 
+step to capture meta degradation knowledge as: 
+θ ← θ   α
+outer
+⋅ ∇
+θ
+1
+M
+∑
+M
+i = 1
+L ( θ , φ
+i
+, D
+train
+q , i
+) . (5) 
+Task embeddings are comprised of a set of low-dimensional vectors; 
+thus, it can be taken as a low-dimensional parameter space. In contrast, 
+the entire predictive model consists of multiple convolution and fully 
+connected layers, making it a high-dimensional parameter space. Unlike 
+MAML, which encodes task-specific degradation knowledge into a high- 
+dimensional parameter space by updating the entire predictive model in 
+the adaptation process, the proposed algorithm encodes task-specific 
+degradation knowledge into a low-dimensional parameter space by 
+only updating task embeddings during adaptation. Consequently, the 
+adaptation process, where labeled data is limited, can be decoupled from 
+the high-dimensional parameter space, which effectively attenuates 
+overfitting by avoiding operations that employ very few labeled data to 
+train high-dimensional parameter spaces. The implementation of the 
+improved MAML is outlined in Algorithm 1 .
+Task embeddings can be connected to the feature extractor or the 
+regressor to constitute a complete predictive model through FiLM. 
+However, if task embeddings are only connected to the regressor, or 
+connected to both the feature extractor and the regressor, the cross- 
+domain ability of the predictive model becomes limited because the 
+algorithm tends to optimize the decision boundary of the regressor 
+rather than the degradation representation space of the feature extractor 
+in the adaptation process, that is, representation reuse ( Raghu et al., 
+2020 ) becomes the dominant adaptation strategy. In this case, the al -
+gorithm lacks the ability to make a significant change to the degradation 
+representation space, hindering the adaptation process of the predictive 
+model for new tasks. In our algorithm, task embeddings are only con -
+nected to the feature extractor, as shown in Fig. 4 and Fig. 5 . Therefore, 
+the predictive model can exclusively optimize the degradation repre -
+sentation space of the feature extractor in the adaptation process, 
+making representation change ( Oh et al., 2021 ) the dominant adaptation 
+Fig. 4. The overview of the predictive model. Meta-parameters encode meta degradation knowledge and task embeddings encode task-specific degrada -
+tion knowledge.
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+5 
+
+===== PAGE 6 =====
+strategy. In this case, the representation space can be significantly 
+changed to adapt to the new tasks by accepting task-specific knowledge 
+from task embeddings, which improves cross-domain adaptability. 
+Algorithm 1 . : MAML with task embeddings for cross-domain few- 
+shot RUL estimation 
+4. Experimental case study 1
+4.1. Data description
+In this case study, various experiments were performed on a 
+benchmarking problem regarding turbofan engine RUL estimation, i.e. 
+C-MAPSS datasets ( Saxena et al., 2008 ). The datasets are provided by the 
+NASA Ames Prognostics Data Repository through Commercial Modular 
+Aero-Propulsion System Simulation, which involves 4 subsets: FD001, 
+FD002, FD003, and FD004. As shown in Table 1 , each subset is 
+composed of multiple multi-variate temporal trajectories that are 
+divided into training trajectories and testing trajectories, and the 
+multi-variate trajectory is comprised of 21 sensor values and 3 setting 
+parameters. Training trajectories contain the full lifecycle monitoring 
+data of engines and testing trajectories are truncated before failure.
+To validate our framework in the cross-domain few-shot situation 
+Fig. 5. The details of the embeddings. The embeddings inject task-specific degradation knowledge to the feature extractor by feature-wise linear modulation. The 
+variable "a" represents the time dimension size, the variable "b" represents the sensor dimension size, and the variable "c" represents the channel size.
+Table 1 
+Details of C-MAPSS dataset.
+Sub-dataset FD001 FD002 FD003 FD004
+Time series training set 100 260 100 249
+Time series test set 100 259 100 248
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+6 
+
+===== PAGE 7 =====
+where the trajectories of the base domain are sufficient and the trajec -
+tories of the novel domain are limited, typical 12 cross-domain scenarios 
+that focus on a single base domain were set up for the experiments, as 
+shown in
+Table 2 . In FD001 and FD002, the failure comes from the high- 
+pressure compressor (HPC). In FD003 and FD004, the failure comes 
+from the HPC and fan. In FD002 and FD004, degradation occurs under 
+variable operational conditions. For the base domain, a series of run-to- 
+failure trajectories were randomly selected from the corresponding 
+training set to construct the meta-tasks. For the novel domain, K run-to- 
+failure trajectories were randomly selected from the corresponding 
+training set to form the support set, and all truncation points in the 
+corresponding test set were used to form the query set for evaluation.
+For the C-MAPSS datasets, a piece-wise linear degradation model has 
+been proven to be feasible and effective. The degradation model follows 
+the assumption that the RUL label RUL
+early 
+remains constant (125 cycles) 
+at the initial stage before decreasing linearly with engine degradation 
+until failure.
+To evaluate the effectiveness of the proposed framework in RUL 
+estimation, the root mean square error (RMSE) equation was utilized as 
+a performance metric: 
+RMSE =
+̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅ ̅
+1
+N
+∑
+N
+i = 1
+d
+2
+i
+√
+, d
+i
+= R
+̂
+U L
+i
+  RUL
+i
+, (6) 
+where RUL
+i 
+and R
+̂
+U L
+i 
+represent the actual RUL and estimated RUL for 
+the i th query sample in the meta-testing set, respectively. Additionally, 
+N denotes the total amount of query samples in the meta-testing set. The 
+other metric that was used is the Score function, which imposes more 
+substantial penalties for late predictions: 
+Score =
+∑
+N
+i = 1
+s
+i
+, s
+i
+=
+{
+e
+  d
+i
+/ 13
+  1 , d
+i
+< 0
+e
+d
+i
+/ 10
+  1 , d
+i
+≥ 0
+. (7) 
+Similar to the RMSE, RUL estimation frameworks with better per -
+formance will produce lower Score value. However, unlike the RMSE, 
+the Score function assigns heavier penalties for late predictions ( d
+i
+> 0) 
+compared to early predictions ( d
+i
+< 0) because late predictions are more 
+likely to cause serious catastrophes and massive economic losses.
+4.2. Data preprocessing
+4.2.1. Data normalization
+The numerical ranges of various sensors are significantly different, 
+which severely hinders convergence of the predictive model. In this 
+situation, normal Min-Max normalization is typically employed to 
+normalize the data within the range of [-1, 1]. However, for variable 
+operational conditions, the numerical ranges of the monitoring data 
+from the same sensor but different operational conditions are still 
+different, which hinders the extraction of the degradation tendency. 
+Consequently, the sensor values were normalized within the range of 
+[-1, 1] by performing variable operational conditions using Min-Max 
+normalization: 
+̃x
+j , k
+i
+=
+2 ( x
+j , k
+i
+  x
+j , k
+min
+)
+x
+j , k
+max
+  x
+j , k
+min
+  1 . (8) 
+Here, k indicates the operational condition category, x
+j , k
+i 
+represents 
+the original sensor value of the i th time point and j th sensor, and ̃x
+j , k
+i 
+is 
+the normalized sensor value of x
+j , k
+i
+. Additionally, x
+j , k
+max 
+and x
+j , k
+min
+denote the 
+maximum and minimum original values from the j th sensor under the 
+operational condition k, respectively. The k-means algorithm was then 
+leveraged according to 3 setting parameters to classify the sensor data of 
+each time point. After normalization, the values from some of the sen -
+sors remained constant or fluctuated around a constant value 
+throughout the full lifecycle without any degradation information. 
+Therefore, 14 sensors with a significant degradation trend were selected, 
+similar to a previous study ( Li et al., 2018 ).
+4.2.2. Sliding time window
+Multi-time step data contain considerably more time series infor -
+mation than single time step data; thus, the sliding time window was 
+exploited to obtain multi-time step data. Given the time window size W , 
+multi-variate data from the i   W th step to the i th step were enclosed as 
+the feature map of the i th step, where the shape of each feature map is 
+[ W , 14 ] . To balance the estimation performance and computing load, the 
+time window size W was set to 30, and the trajectories whose maximum 
+record cycles are less than 30 were disregarded.
+4.3. Experimental settings
+In this case, K was set to 1 and 30 % of the training trajectories were 
+randomly selected from the base domain to construct the meta-tasks, 
+which were enriched via segmentation with P = 30.
+As shown in Fig. 4 and Fig. 5 , the preprocessed data were put into the 
+feature extractor, and the transformation of the embeddings was con -
+nected to the third convolutional layer of the feature extractor via FiLM. 
+After the feature extractor, the feature maps were flattened and the RUL 
+values were output through a fully-connected layer of the regressor. 
+Table 3 lists the detailed model structure hyperparameters. When the 
+base domain was either FD001 or FD003, the values of both the n
+C 
+and 
+n
+E 
+were set to 50. When the base domain was either FD002 or FD004, the 
+values of both the n
+C 
+and n
+E 
+were set to 100. Notably, zeros-padding 
+operation was implemented to keep the feature map shape unchanged 
+for the first three convolutional layers.
+For the meta-learning process, the embeddings were trained using a 
+1-gradient inner step for both the meta-training and meta-testing phases. 
+Additionally, the initial parameters of the embeddings φ were set to 
+[ 0 , … , 0 ]
+⊤
+, the outer learning rate was set to 5e-5, and the inner learning 
+rate was set to 2e-5. The Adam optimizer was utilized to perform opti -
+mization, and the reported experimental results were averaged over 50 
+repetitions to attenuate the randomness of sampling and training.
+4.4. Ablation study
+Compared with the cross-domain few-shot RUL estimation frame -
+works that employ the traditional MAML, the segmentation strategy and 
+task embeddings are introduced into our framework. Therefore, ablation 
+Table 3 
+Hyperparameters of the model structure.
+Parameter Values
+Input size 30 × 14
+Conv 1 kernel: 3 × 1 channel: n
+C
+Conv 2 kernel: 3 × 1 channel: n
+C
+Conv 3 kernel: 3 × 1 channel: n
+C
+Conv 4 kernel: 3 × 3 channel: n
+C
+Linear 1 336 n
+C
+× 1
+Embeddings n
+E
+Linear 2 n
+E
+× 2 n
+E
+Linear 3 2 n
+E
+× 2 n
+E
+Output size 1
+Table 2 
+Typical 12 cross-domain scenarios.
+Base Novel Base Novel
+Scenario (1) FD001 → FD003 Scenario (7) FD003 → FD004
+Scenario (2) FD003 → FD001 Scenario (8) FD004 → FD003
+Scenario (3) FD002 → FD004 Scenario (9) FD002 → FD003
+Scenario (4) FD004 → FD002 Scenario (10) FD003 → FD002
+Scenario (5) FD001 → FD002 Scenario (11) FD001 → FD004
+Scenario (6) FD002 → FD001 Scenario (12) FD004 → FD001
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+7 
+
+===== PAGE 8 =====
+experiments were performed to verify their validity and necessity. 
+Consequently, four ablation cases are discussed: (1) neither the seg -
+mentation strategy nor task embeddings are used, that is, MAML algo -
+rithm without the segmentation strategy. (2) Only the segmentation 
+strategy is used, that is, MAML algorithm with the segmentation strat -
+egy. (3) Only task embeddings are used, that is, MAML with the task 
+embeddings algorithm and without the segmentation strategy. (4) Both 
+the segmentation strategy and task embeddings are used, that is, MAML 
+with the task embeddings algorithm and segmentation strategy. As 
+shown in Table 4 , Table 5 , and Table 6 , the addition of each part can 
+effectively improve the estimation performance, and the predictive 
+model produces the best estimation performance when both parts are 
+employed together, which indicates that the two parts are indispensable.
+For the segmentation strategy, the number of meta-tasks can be 
+increased by 3–5 times, which enables the model to capture more 
+generalized meta degradation knowledge, thereby effectively improving 
+the estimation performance. For the task embeddings, their utilization 
+leads to a reduction in the number of required parameter updates of 
+about 30–70 % during the adaptation process compared with the 
+framework without task embeddings. As mentioned above, task em -
+beddings effectively mitigate overfitting by performing updates with 
+extremely few labeled data on a relatively low-dimensional parameter 
+space, significantly improving the estimation performance. Meanwhile, 
+the enhanced performance also benefits from the adoption of repre -
+sentation change because it significantly improves cross-domain 
+adaptability.
+5. Experimental case study 2
+5.1. Data description
+In the second case study, various experiments were conducted on 
+new aero-turbofan engine degradation datasets based on the JT9D en -
+gine. A set of thermodynamic mechanism simulation models of the aero- 
+turbofan engine are established to build the datasets. The standard pa -
+rameters of the engine and its components are obtained from the 
+Toolbox for the Modeling and Analysis of Thermodynamic Systems 
+( Chapman et al., 2014 ) developed by NASA. As depicted in Table 7 , the 
+datasets involve 2 subsets with different fault modes, denoted as the 
+single degradation mode (SDM) and multiple degradation mode (MDM). 
+Each multi-variate trajectory is comprised of 26 sensor values.
+To validate our framework in the cross-domain few-shot situation 
+where the trajectories of the base domain are sufficient and the trajec -
+tories of the novel domain are limited, the cross-domain scenario 
+SDM→MDM was set up for the experiments. In the SDM, the failures 
+come from the efficiency degradation of the HPC. In the MDM, the 
+failures come from the efficiency and flow degradation of the HPC. For 
+the base domain, a series of run-to-failure trajectories were randomly 
+selected from the corresponding training set to construct the meta-tasks. 
+For the novel domain, K run-to-failure trajectories were randomly 
+selected from the corresponding training set to form the support set, and 
+Table 4 
+Ablation studies of the segmentation strategy and task embeddings in FD001→FD003, FD003→FD001, FD002→FD004, and FD004→FD002.
+Ablation cases Segmentation Task embeddings FD001→FD003 FD003→FD001 FD002→FD004 FD004→FD002
+RMSE Score RMSE Score RMSE Score RMSE Score
+(1) ​ ​ 26.22 3196 27.67 2534 29.31 9053 25.91 6159
+(2) ✓ ​ 26.07 2621 25.10 1973 28.96 8824 24.53 3675
+(3) ​ ✓ 24.59 1902 27.34 2380 28.29 7947 25.56 5072
+(4) ✓ ✓ 24.34 1829 24.24 1605 26.96 6944 23.24 2651
+Table 5 
+Ablation studies of the segmentation strategy and task embeddings in FD001→FD002, FD002→FD001, FD003→FD004, and FD004→FD003.
+Ablation cases Segmentation Task embeddings FD001→FD002 FD002→FD001 FD003→FD004 FD004→FD003
+RMSE Score RMSE Score RMSE Score RMSE Score
+(1) ​ ​ 35.74 12,072 33.45 5669 36.12 12,349 34.83 5782
+(2) ✓ ​ 34.61 9413 32.11 4695 35.02 9034 33.74 4711
+(3) ​ ✓ 34.47 9146 32.78 4792 34.88 8879 34.13 5017
+(4) ✓ ✓ 32.06 7678 30.89 4036 32.37 7855 31.70 4145
+Table 6 
+Ablation studies of the segmentation strategy and task embeddings in FD002→FD003, FD003→FD002, FD001→FD004, and FD004→FD001.
+Ablation cases Segmentation Task embeddings FD002→FD003 FD003→FD002 FD001→FD004 FD004→FD001
+RMSE Score RMSE Score RMSE Score RMSE Score
+(1) ​ ​ 37.09 6453 37.26 13,524 37.68 13,771 36.70 6194
+(2) ✓ ​ 35.71 5538 35.45 9595 36.26 11,076 34.42 5136
+(3) ​ ✓ 35.52 5175 36.51 10,764 35.82 10,631 35.25 5578
+(4) ✓ ✓ 33.21 4534 33.16 8965 33.43 9366 32.71 4377
+Table 7 
+Details of JT9D Engine Datasets.
+Sub-dataset SDM MDM
+Time series training set 150 150
+Time series test set 50 50
+Table 8 
+Ablation studies of the segmentation strategy and task embeddings in 
+SDM→MDM.
+Ablation cases Segmentation Task embeddings SDM→MDM
+RMSE Score
+(1) ​ ​ 9.66 69.74
+(2) ✓ ​ 9.01 61.97
+(3) ​ ✓ 8.58 55.31
+(4) ✓ ✓ 7.72 41.05
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+8 
+
+===== PAGE 9 =====
+all truncation points in the test set were used to form the query set for 
+evaluation. Meanwhile, to evaluate the effectiveness of the proposed 
+framework, the RMSE and Score were utilized as the performance 
+metrics.
+5.2. Data preprocessing and experimental settings
+For data preprocessing, the data normalization and sliding time 
+window were also employed, similar to case study 1. For the experi -
+mental settings, the embeddings were trained using the 1-gradient inner 
+step for the meta-training and meta-testing phases. Additionally, the 
+outer and inner learning rate were set to 1e-3, and the other settings 
+were kept consistent with those of the FD001 → FD003 scenario in case 
+study 1.
+5.3. Ablation study
+To verify the validity and necessity of the segmentation strategy and 
+task embeddings, ablation experiments were performed as shown in 
+Table 8 , where the ablation cases are identical to those discussed in 
+Section 4.4 . It can be observed that the utilization of each part effec -
+tively improves the estimation performance, which further demon -
+strates the indispensability of both components.
+6. Experimental case study 3
+6.1. Data description
+To demonstrate the practical applicability of the proposed frame -
+work within real-world prognostics and health management workflows, 
+its application in an industrial wind turbine gearbox condition moni -
+toring system was considered. The transmission system of industrial 
+wind turbine gearboxes primarily consists of the main shaft, a first-stage 
+planetary gear train, and a second-stage parallel gear train. The 
+simplified structure of the wind turbine gearbox is illustrated in Fig. 6 , 
+where the gearbox type is FL2000H and the total transmission ratio is 
+117.66. To ensure long-term stability and facilitate real-time fault 
+diagnosis and prognosis, sensors are deployed on the gearboxes, 
+enabling the continuous collection of full lifecycle operational data. The 
+integration of the proposed framework into the system follows a three- 
+stage process:
+(i) Initial model deployment: Historical degradation trajectories 
+collected by the monitoring system are used to train a foundational 
+predictive model with meta-knowledge, which is then deployed within 
+the condition monitoring system.
+(ii) Model adaptation: During operation, the wind turbine may 
+encounter operating profiles that were not previously observed in his -
+torical degradation trajectories. As failures occur, new degradation 
+trajectories are collected, allowing the foundational predictive model to 
+be refined based on deterioration patterns that actually occur in current 
+new profiles.
+(iii) Real-time prognostic and maintenance decision support: 
+The refined predictive model is deployed within the real-time moni -
+toring system, utilizing sensor measurements to estimate the RUL of the 
+wind turbine. The prediction results are then leveraged to implement 
+proactive maintenance strategies, reducing unexpected failures and 
+enhancing the reliability of wind turbine operations.
+In specific experiments, these sensors are deployed on the gearboxes 
+to record data from 9 sensors and 3 setting parameters. To validate our 
+framework in a cross-domain few-shot scenario, the cross-domain sce -
+nario BD → ND was established for experimentation. "BD" (base domain) 
+consists of multiple historical degradation trajectories, and "ND" (novel 
+domain) contains newly-observed degradation trajectories. For the base 
+domain, a series of historical trajectories were randomly selected to 
+construct meta-tasks. In the novel domain, K run-to-failure trajectories 
+were utilized to form the support set, and real-time operating equipment 
+monitoring data were used as the query set for evaluation. Meanwhile, 
+the RMSE and Score were utilized as the performance metrics to eval -
+uate the effectiveness of the proposed framework.
+Fig. 6. The simplified structure of the wind turbine gearbox.
+Table 9 
+Ablation studies of the segmentation strategy and task embeddings in BD → ND.
+Ablation cases Segmentation Task embeddings BD → ND
+RMSE Score
+(1) ​ ​ 0.2217 3.58
+(2) ✓ ​ 0.1998 3.19
+(3) ​ ✓ 0.2063 3.35
+(4) ✓ ✓ 0.1832 3.01
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+9 
+
+===== PAGE 10 =====
+Fig. 7. The RMSE values of the proposed framework with different P in the case study 1.
+Fig. 8. The Score values of the proposed framework with different P in the case study 1.
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+10 
+
+===== PAGE 11 =====
+6.2. Data preprocessing and experimental settings
+For data preprocessing and the experimental settings, the outer and 
+inner learning rate were set to 1e-4 and the other settings were kept 
+consistent with those of the FD001 → FD003 scenario in case study 1. 
+Additionally, label normalization was applied to normalize the RUL 
+values within the range of [0, 1], thereby minimizing differences be -
+tween trajectories.
+6.3. Ablation study
+To validate the effectiveness and necessity of the segmentation 
+strategy and task embeddings, ablation experiments were conducted, as 
+presented in Table 9 . The ablation cases analyzed here are similar to 
+those discussed in Section 4.4 . The results indicate that incorporating 
+each component significantly enhances estimation performance, further 
+highlighting the essential role of both elements.
+7. Experimental analysis
+7.1. Analysis of the segmentation strategy
+As depicted in Section 3.2.1 , the segmentation strategy can effec -
+tively increase the number of meta-tasks, enabling the model to capture 
+more generalized meta degradation knowledge. However, the selection 
+of the number of segments P may have an important effect on the esti -
+mation performance. To analyze the effect and efficiently use the data 
+provided, different P were applied to our frameworks in the case studies. 
+Drawing on the four prior scenarios as illustrative cases, box plots of the 
+RMSE and Score values with different P were obtained, as shown in 
+Fig. 7 , Fig. 8 , Fig. 9 , and Fig. 10 . The growth of the P, RMSE and Score 
+values tend to descend first before ascending. This might be because one 
+trajectory can only generate one or two sub-trajectories when P is too 
+large, resulting in few meta-tasks and thus limiting the meta-training 
+process. When P is too small, one trajectory can generate many sub- 
+trajectories; however, each sub-trajectory contains few time points, 
+Fig. 9. The RMSE and Score values of the proposed framework with different P in the case study 2.
+Fig. 10. The RMSE and Score values of the proposed framework with different P in the case study 3.
+Table 10 
+Comparison experiments of different algorithms in FD001 → FD003, FD003 → FD001, FD002 → FD004, and FD004 → FD002.
+Algorithms FD001 → FD003 FD003 → FD001 FD002 → FD004 FD004 → FD002
+RMSE Score RMSE Score RMSE Score RMSE Score
+Pretrain-finetune w/o freezing 33.78 12,709 27.50 3173 32.61 30,854 25.54 12,691
+Pretrain-finetune w/ freezing 33.37 8610 25.75 2264 33.99 26,829 25.72 11,619
+ANIL 26.04 2593 25.36 2046 28.89 8517 24.96 3979
+AMAML 26.22 2771 25.55 2336 29.02 7812 25.17 4373
+MTL 26.74 2836 25.32 2377 29.24 9755 24.84 4785
+ALFA 26.23 2751 25.93 2289 29.84 8219 25.32 3956
+Gradient-Agreement 27.98 2690 26.47 2184 29.33 7893 25.33 5257
+Reptile 26.21 3351 25.55 2486 31.87 18,047 26.93 15,515
+MAML 26.07 2621 25.10 1973 28.96 8824 24.53 3675
+MAML w/ task embeddings 24.34 1829 24.24 1605 26.96 6944 23.24 2651
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+11 
+
+===== PAGE 12 =====
+which leads to limited information on each sub-trajectory. It can also be 
+observed that the estimation performance is generally better when P is 
+between 25 and 35.
+7.2. Analysis of the task embeddings
+As depicted in Section 3.2.2 , after employing task embeddings, the 
+proposed training algorithm can effectively mitigate overfitting and 
+adopt representation change as the main adaptation strategy to improve 
+cross-domain adaptability. Thus, a series of experimental analyses is 
+outlined in this section to clearly illustrate the benefits of task 
+embeddings.
+7.2.1. Prognostic performance
+To illustrate the effectiveness and superiority of the proposed 
+training algorithm using task embeddings, a series of experiments was 
+conducted to compare our algorithm with several existing cross-domain 
+few-shot RUL estimation training algorithms. Notably, the experiments 
+focus on the comparison of the cross-domain few-shot training algo -
+rithms rather than model structures. Therefore, the cross-domain few- 
+shot RUL estimation training algorithms adopted in the different liter -
+atures were compared under the premise of using the segmentation 
+strategy and the same convolutional neural network as the model 
+structure. Meanwhile, for the fairness of comparison, the scope of the 
+algorithms was limited to inductive TL to ensure that all the comparison 
+algorithms can make use of the supervised degradation information 
+from the novel domain. Specifically, pretrain-finetune used in Zhang 
+et al. (2018) , the original MAML used in Ding et al. (2021); Mo et al. 
+(2023) and the proposed algorithm were employed for comparison. 
+Moreover, the commonly used meta-learning training algorithms such 
+as Reptile ( Nichol et al., 2018 ), Gradient-Agreement ( Eshratifar et al., 
+2018 ), ALFA ( Baik et al., 2020a ), MTL ( Eshratifar et al., 2019 ), AMAML 
+( Pan et al., 2022 ), and ANIL ( Shao et al., 2024 ) were also introduced for 
+comparison.
+The experimental results of the above algorithms in some scenarios 
+of case study 1 are shown in Table 10 . The overall performance of the 
+proposed algorithm is better than that obtained in others. In compari -
+son, the mean RMSE and mean Score of our algorithm decrease signif -
+icantly, which verifies the effectiveness of our algorithm. Meanwhile, 
+the meta-learning-based algorithms achieve promising performance in 
+comparison with the pretrain-finetune-based algorithms. More specif -
+ically, the descending percentages of the mean RMSE and mean Score 
+are 11 % and 63 %, respectively. This is because the unique mechanism 
+of meta-learning allows the algorithms to have a greater generalization 
+capability on new tasks in the case of limited labeled samples. Similarly, 
+as shown in Table 11 , Table 12 , Table 13 , and Table 14 , the comparison 
+results in other scenarios can also serve as supplementary evidence to 
+support the aforementioned analysis.
+7.2.2. Impact of the connection position
+To analyze the impact of the position where task embeddings are 
+connected to the backbone network, several experiments with different 
+connection positions were implemented, with FD001 → FD003, 
+FD003 → FD001, FD002 → FD004, and FD004 → FD002 as examples. 
+Fig. 11 shows that as the connection position moves from the first to the 
+fourth convolutional layer, the estimation performance first improves 
+before declining. The main reason is that the early convolution layers 
+produce the task-invariant features that are shared across both the base 
+and novel domains, while the later convolution layers produce 
+discriminative task-specific features for better task adaptation ( Zeiler 
+and Fergus, 2014 ). According to the experimental results, the third 
+convolution layer is the optimal position for task adaptation when 
+responding to different domains. In addition, the estimation perfor -
+mance with the connection position in the last three convolution layers 
+is better than that with the connection position in the fully-connected 
+layer. This suggests that representation change at a suitable position 
+can outperform representation reuse in cross-domain RUL estimation 
+scenarios.
+7.2.3. Expanded statistical analysis
+To provide a statistical foundation for our findings, detailed evalu -
+ations of both the standard deviation (STD) and coefficient of variation 
+(CV) were conducted. The standard deviation is a measure that describes 
+the dispersion of the data points from the mean: 
+STD =
+̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅ ̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅̅ ̅
+1
+n
+∑
+n
+i = 1
+( Metric
+i
+  μ )
+2
+√
+, μ =
+1
+n
+∑
+n
+i = 1
+Metric
+i
+, (9) 
+where Metric
+i 
+represents the performance metric (either RMSE or Score) 
+for the i th repetition, and n denotes the total amount of repetitions. 
+Additionally, CV is a relative measure that standardizes the standard 
+deviation using the mean, which is particularly useful for describing the 
+degree of the dispersion at different scales: 
+CV =
+STD
+μ
+× 100% . (10) 
+As shown in Table 15 and Table 16 , statistical experiments were 
+implemented, where FD001 → FD003, FD003 → FD001, FD002 → FD004, 
+and FD004 → FD002 were used as examples. It is noteworthy that the CV 
+values for both the RMSE and Score metrics within the proposed 
+framework consistently remain below 20 % in most cross-domain sce -
+narios, which underscores the robustness of the framework and affirms 
+the reliability of the experimental results. Additionally, compared to 
+other algorithms, the proposed algorithm exhibits lower STD and CV 
+values across the majority of the cross-domain scenarios, effectively 
+demonstrating its advantages.
+To visually analyze the robustness, a box plot of the RMSE is pre -
+sented in Fig. 12 . Meta-learning-based and pretrain-finetune-based al -
+gorithms exhibit similar robustness in FD003 → FD001 and 
+FD004 → FD002. Nevertheless, in FD001 → FD003 and FD002 → FD004, 
+pretrain-finetune-based algorithms are considerably less robust than 
+meta-learning-based algorithms. This discrepancy is primarily owing to 
+Table 11 
+Comparison experiments of different algorithms in FD001 → FD002, FD002 → FD001, FD003 → FD004, and FD004 → FD003.
+Algorithms FD001 → FD002 FD002 → FD001 FD003 → FD004 FD004 → FD003
+RMSE Score RMSE Score RMSE Score RMSE Score
+Pretrain-finetune w/o freezing 42.71 24,151 41.6 11,620 43.73 28,487 42.59 13,746
+Pretrain-finetune w/ freezing 41.8 21,753 41.14 9722 42.28 23,856 41.7 11,484
+ANIL 34.73 9551 31.97 4520 35.16 9986 33.41 4683
+AMAML 35.44 12,099 33.02 5074 35.94 13,950 34.53 4990
+MTL 35.76 12,847 33.58 5322 36.62 13,623 34.91 5226
+ALFA 35.12 11,316 33.26 5239 35.89 13,145 34.65 5124
+Gradient-Agreement 36.27 10,868 34.79 4971 37.03 12,232 35.73 5018
+Reptile 34.83 12,552 33.24 5877 35.59 20,756 34.62 5991
+MAML 34.61 9413 32.11 4695 35.02 9034 33.74 4711
+MAML w/ task embeddings 32.06 7678 30.89 4036 32.37 7855 31.70 4145
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+12 
+
+===== PAGE 13 =====
+the presence of only one fault mode in FD001 and FD002, whereas 
+FD003 and FD004 feature two fault modes. Therefore, in FD003→FD001 
+and FD004→FD002, the HPC degradation in the novel domain has 
+appeared in the base domain, significantly reducing the difficulty of 
+cross-domain adaptation. However, in FD001→FD003 and 
+FD002→FD004, the fan degradation in the novel domain does not exist 
+in the base domain, resulting in larger domain divergences. This notable 
+robustness advantage in scenarios with slightly higher cross-domain 
+difficulty, such as FD001→FD003 and FD002→FD004, highlights the 
+reliability of meta-learning algorithms in challenging scenarios.
+To further evaluate the RUL estimation performance of the proposed 
+algorithm from a statistical analysis perspective, the error distribution of 
+the RUL estimation values on the test set were computed, as illustrated 
+in Fig. 13 . As shown in the figure, the error follows a distribution close to 
+normal. The majority of the errors are concentrated within the smaller 
+error interval, with only a few instances falling within the higher error 
+interval. Meanwhile, the distribution center exhibits a slight shift to -
+wards negative values. This suggests that the model tends to perform 
+early predictions, which contributes to the prevention of severe in -
+cidents and the reduction of potential economic losses.
+To further investigate the behavioral patterns of the time series data, 
+we analyzed the temporal trends in the absolute error and confidence 
+interval (CI) width, as shown in Fig. 14 . As time progresses and the 
+engine approaches failure, both the absolute error and CI width of the 
+proposed algorithm decrease significantly. This suggests that the algo -
+rithm exhibits an improved estimation accuracy and robustness in this 
+phase, thereby supporting the need for timely maintenance decisions as 
+failure approaches.
+7.2.4. Discussion on the data size
+To demonstrate the merits of the proposed algorithms when using 
+very few samples, the impact of the data size on various algorithms was 
+investigated, taking FD001→FD003 as an example. To analyze the 
+impact of the novel domain data size, several experiments were per -
+formed with K values of 5, 2, and 1, and the RMSE results are displayed 
+in Fig. 15 (a). As K decreases, the RMSE of the proposed algorithm 
+slightly increases as the RMSE of the other algorithms drastically in -
+creases. This is mainly because the proposed algorithm only updates task 
+embeddings φ in the inner loop and adaptation process, attenuating 
+overfitting in scenarios with limited data. The results demonstrate that 
+the proposed algorithm has a greater advantage over the others when 
+there is less data in the novel domain.
+To analyze the impact of the base domain data size, several experi -
+ments were performed with 10 %, 30 %, and 60 % base domain trajec -
+tories, and the RMSE results are shown as Fig. 15 (b). It can be observed 
+that the RMSE values increase with the reduction in the base domain 
+data size owing to the fact that the information extracted in the pre -
+training or meta-training phase suffers from a reduced data quantity of 
+the base domain, which indicates that the base domain data quantity 
+positively influences the estimation quality.
+7.3. Comparison experiments
+In this section, we demonstrate the effectiveness and superiority of 
+the proposed framework by comparing it with several established 
+prognostic frameworks from previous literatures, including DSSANN 
+( Xu et al., 2022 ), DCRN ( Shang et al., 2024 ), LSTM-DANN ( Costa et al., 
+2020 ), LSTM-ADDA ( Duan et al., 2022 ), LSTM-FT ( Zhang et al., 2018 ), 
+MAML ( Mo et al., 2023 ). Table 17 , Table 18 , and Table 19 present the 
+comparison results on the public C-MAPSS datasets, where “imp” 
+highlights the improvements of the proposed framework over existing 
+advanced prognostic frameworks.
+It is found that DSSANN and DCRN exhibit a relatively poor esti -
+mation performance as they do not account for the distribution shifts 
+that invariably exist across different domains. LSTM-DANN and LSTM- 
+ADDA employ unsupervised domain adaptation techniques, which en -
+hances the cross-domain capability of the models. However, their pre -
+dictive capabilities are somewhat limited compared to LSTM-FT and 
+MAML owing to their inability to utilize the small amounts of labeled 
+data available in novel domains. In comparison to these established 
+prognostic frameworks, the proposed framework not only leverages the 
+Table 12 
+Comparison experiments of different algorithms in FD002→FD003, FD003→FD002, FD001→FD004, and FD004→FD001.
+Algorithms FD002→FD003 FD003→FD002 FD001→FD004 FD004→FD001
+RMSE Score RMSE Score RMSE Score RMSE Score
+Pretrain-finetune w/o freezing 44.92 15,855 44.87 36,059 45.39 39,376 44.35 14,233
+Pretrain-finetune w/ freezing 42.64 12,782 43.93 28,991 43.47 32,519 43.79 12,232
+ANIL 35.93 5889 35.32 9456 36.41 11,378 34.29 4991
+AMAML 36.85 6425 36.23 12,662 37.25 13,381 35.31 5313
+MTL 36.77 6576 36.64 14,187 37.38 15,610 35.97 6160
+ALFA 36.5 5935 36.27 13,372 37.1 14,473 35.65 5668
+Gradient-Agreement 36.99 5183 37.15 11,826 37.65 12,755 36.34 5132
+Reptile 36.12 6741 36.76 16,534 36.74 23,443 35.14 6369
+MAML 35.71 5538 35.45 9595 36.26 11,076 34.42 5136
+MAML w/ task embeddings 33.21 4534 33.16 8965 33.43 9366 32.71 4377
+Table 13 
+Comparison experiments of different algorithms in SDM→MDM.
+Algorithm SDM→MDM
+RMSE Score
+Pretrain-finetune w/o freezing 12.26 93.93
+Pretrain-finetune w/ freezing 12.55 96.59
+ANIL 9.86 65.83
+AMAML 10.53 66.2
+MTL 11.07 70.31
+ALFA 10.62 66.08
+Gradient-Agreement 11.26 73.74
+Reptile 11.87 74.62
+MAML 9.01 61.97
+MAML w/ task embeddings 7.72 41.05
+Table 14 
+Comparison experiments of different algorithms in BD→ND.
+Algorithm BD→ND
+RMSE Score
+Pretrain-finetune w/o freezing 0.2466 3.93
+Pretrain-finetune w/ freezing 0.2391 3.69
+ANIL 0.2083 3.43
+AMAML 0.2012 3.26
+MTL 0.2195 3.51
+ALFA 0.2120 3.39
+Gradient-Agreement 0.2174 3.52
+Reptile 0.2287 3.61
+MAML 0.1998 3.19
+MAML w/ task embeddings 0.1832 3.01
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+13 
+
+===== PAGE 14 =====
+unique mechanism of meta-learning, which facilitates generalization in 
+cross-domain few-shot scenarios, but also further enhances its estima -
+tion performance through the introduction of a segmentation strategy, 
+task embedding design, and representation change. These 
+enhancements effectively prevent overfitting and improve cross-domain 
+adaptability, allowing the proposed framework to consistently exhibit 
+optimal performance across various cross-domain scenarios.
+Fig. 11. Experimental results with different connection position.
+Table 15 
+Statistical experiments of the RMSE.
+Algorithm FD001 → FD003 FD003 → FD001 FD002 → FD004 FD004 → FD002
+STD CV STD CV STD CV STD CV
+Pretrain-finetune w/o freezing 2.88 8.54 % 1.27 4.63 % 2.72 8.33 % 1.19 4.64 %
+Pretrain-finetune w/ freezing 2.72 8.15 % 0.93 3.61 % 2.40 7.05 % 0.75 2.92 %
+ANIL 0.48 1.82 % 0.70 2.78 % 0.46 1.58 % 0.67 2.70 %
+AMAML 0.41 1.58 % 0.88 3.43 % 0.68 2.34 % 0.79 3.13 %
+MTL 0.46 1.72 % 0.86 3.31 % 0.74 2.50 % 0.72 2.85 %
+ALFA 0.69 2.65 % 0.93 3.67 % 0.83 2.84 % 0.83 3.36 %
+Gradient-Agreement 0.84 3.00 % 0.87 3.28 % 0.84 2.85 % 0.76 3.01 %
+Reptile 0.96 3.67 % 1.12 4.39 % 0.63 1.99 % 0.80 2.97 %
+MAML 0.39 1.50 % 0.66 2.62 % 0.46 1.59 % 0.66 2.69 %
+MAML w/ task embeddings 0.27 1.12 % 0.46 1.91 % 0.29 1.08 % 0.32 1.39 %
+Table 16 
+Statistical experiments of the Score.
+Algorithm FD001 → FD003 FD003 → FD001 FD002 → FD004 FD004 → FD002
+STD CV STD CV STD CV STD CV
+Pretrain-finetune w/o freezing 9732 76.58 % 1011 31.88 % 18,682 60.55 % 2634 20.76 %
+Pretrain-finetune w/ freezing 3230 37.51 % 551 24.34 % 11,306 42.14 % 3577 30.79 %
+ANIL 458 17.65 % 466 22.79 % 936 10.98 % 771 19.38 %
+AMAML 655 23.64 % 556 23.79 % 1028 13.15 % 1694 38.73 %
+MTL 407 14.35 % 301 12.66 % 1012 10.37 % 755 15.77 %
+ALFA 605 22.00 % 467 20.41 % 1214 14.77 % 1534 38.77 %
+Gradient-Agreement 389 14.46 % 637 29.16 % 1170 14.82 % 1700 32.33 %
+Reptile 951 28.39 % 242 9.76 % 2117 11.73 % 2173 14.01 %
+MAML 419 15.97 % 382 19.36 % 803 9.10 % 640 17.41 %
+MAML w/ task embeddings 183 9.99 % 452 28.19 % 1139 16.41 % 347 13.07 %
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+14 
+
+===== PAGE 15 =====
+8. Discussion
+The proposed cross-domain few-shot prognostic framework demon -
+strates evident application potential across various industrial domains. 
+In aviation applications, the cost of aircraft engines and critical struc -
+tural components is extremely high, resulting in limited labeled data. 
+The ability to refine predictive models with minimal labeled data is 
+particularly valuable for real-time health monitoring and failure pre -
+diction in aviation maintenance systems. In the wind energy sector, the 
+environmental factors are highly diverse, leading to different failure 
+modes and impact the overall performance and reliability of the tur -
+bines. Adapting predictive models to new operating profiles with limited 
+labeled data is essential for effectively predicting faults and scheduling 
+maintenance in wind turbine systems. The potential of our framework in 
+these domains has been preliminarily validated through the three case 
+studies discussed above. Beyond these applications, the proposed cross- 
+domain few-shot prognostic framework has broader applicability across 
+other industrial domains. In manufacturing, complex production ma -
+chinery such as computer numerical control (CNC) machines and ro -
+botic arms often encounter wear-related faults that evolve over time. 
+The proposed framework can be integrated into smart factory environ -
+ments where predictive maintenance strategies rely on sensor data 
+collected across different operating profiles. Furthermore, in trans -
+portation systems, such as railways and autonomous vehicles, drivetrain 
+components and braking systems undergo diverse degradation patterns 
+under different operating profiles. The ability to transfer knowledge 
+Fig. 12. Box plot of the RMSE.
+Fig. 13. Estimation error distribution.
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+15 
+
+===== PAGE 16 =====
+across domains ensures that predictive models remain effective despite 
+shifts in usage patterns and environmental factors.
+9. Conclusion
+In this paper, a novel cross-domain few-shot RUL estimation frame -
+work is proposed based on an improved MAML. First, a segmentation 
+strategy is adopted for meta-tasks construction to increase the number of 
+meta-tasks, providing more comprehensive degradation information for 
+efficient meta knowledge extraction of meta-training. Meanwhile, the 
+MAML is improved by task embeddings. The improved MAML operates 
+extremely few labeled data on an efficient low-dimensional parameter 
+space to further alleviate overfitting caused by limited labeled data and 
+exploits representation change for better adaptability in cross-domain 
+scenarios. These contributions have substantially improved the RUL 
+estimation performance, as demonstrated by notable enhancements in 
+key performance metrics throughout our experiments. Compared to the 
+baseline, the proposed framework achieves a 10 % reduction in the 
+RMSE metric and a 35 % reduction in the Score metric, clearly 
+demonstrating the effectiveness of these contributions. In comparison to 
+established prognostic frameworks, the proposed framework yields a 
+9 % reduction in the RMSE metric and a 31 % reduction in the Score 
+Fig. 14. Absolute error and confidence interval (CI) width.
+Fig. 15. Experimental results with different amounts of data. (a) the novel domain. (b) the base domain.
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+16 
+
+===== PAGE 17 =====
+metric, further highlighting the advantages of the proposed framework 
+over others. Additionally, in most cross-domain scenarios, the CV value 
+of the RMSE metric for the proposed framework remains below 2 %, and 
+the CV value of the Score metric stays below 20 %, underscoring the 
+robustness of the framework and affirming the reliability of the exper -
+imental results. The improved estimation performance provides a robust 
+basis for subsequent maintenance and management, particularly in 
+scenarios with extremely limited data, thus effectively ensuring the 
+safety, reliability, and economy of the mechanical systems. However, 
+certain limitations remain, such as the framework’s reliance on single- 
+modal data, its offline learning nature, and the challenges of general -
+izing to more complex cross-machine scenarios.
+In future research, several directions can be explored to address these 
+limitations and further enhance the framework’s applicability. First, 
+integrating multi-modal data (e.g., vibration, thermal, acoustic, and 
+visual signals) into the framework could provide richer degradation 
+information, potentially improving estimation accuracy and robustness. 
+Second, extending the framework to support online learning would 
+enable real-time RUL estimation and dynamic model updates, address -
+ing the current offline learning limitation. Finally, some more compli -
+cated estimation scenarios, such as cross machine scenarios, can be 
+taken into consideration. The integration of domain adaptation tech -
+niques could be explored to handle more pronounced domain shifts. 
+These future directions aim to build on the current framework’s 
+strengths while addressing its limitations, ultimately advancing the field 
+of PHM.
+CRediT authorship contribution statement
+Xinyu Shang: Writing – review & editing, Writing – original draft, 
+Software, Methodology, Conceptualization. Jie Shang: Writing – review 
+& editing, Supervision, Methodology. Mingyu Li: Writing – review & 
+editing, Supervision, Methodology. Haobo Qiu: Writing – review & 
+editing, Supervision, Resources, Funding acquisition. Liang Gao: Re -
+sources, Funding acquisition. Danyang Xu: Writing – review & editing, 
+Supervision, Methodology.
+Declaration of Competing Interest
+The authors declare that they have no known competing financial 
+interests or personal relationships that could have appeared to influence 
+the work reported in this paper.
+Acknowledgements
+This work was supported by the Key Research and Development 
+Program of Hubei Province of China [grant number 2021AAB001]; the 
+National Natural Science Foundation of China [grant number 
+52075194].
+Table 17 
+Comparison experiments with the established prognostic frameworks in FD001→FD003, FD003→FD001, FD002→FD004, and FD004→FD002.
+Frameworks FD001→FD003 FD003→FD001 FD002→FD004 FD004→FD002
+RMSE Score RMSE Score RMSE Score RMSE Score
+DSSANN ( Xu et al., 2022 ) 67.58 89,165 65.75 59,872 61.16 72,529 52.37 48,550
+DCRN ( Shang et al., 2024 ) 61.40 42,221 58.33 28,736 46.19 18,165 40.86 19,396
+LSTM-DANN ( Costa et al., 2020 ) 42.15 27,318 28.86 7179 36.41 29,102 25.67 13,091
+LSTM-ADDA ( Duan et al., 2022 ) 37.52 15,100 29.12 9443 36.78 21,319 28.66 16,752
+LSTM-FT ( Zhang et al., 2018 ) 31.74 9884 26.68 2943 30.40 21,165 25.56 10,751
+MAML ( Mo et al., 2023 ) 28.11 3658 26.10 2448 29.27 9327 25.03 3960
+MAML w/ task embeddings 24.34 1829 24.24 1605 26.96 6944 23.24 2651
+imp 13.44 % 49.99 % 7.10 % 34.43 % 7.90 % 25.56 % 7.13 % 33.05 %
+Table 18 
+Comparison experiments with the established prognostic frameworks in FD001→FD002, FD002→FD001, FD003→FD004, and FD004→FD003.
+Frameworks FD001→FD002 FD002→FD001 FD003→FD004 FD004→FD003
+RMSE Score RMSE Score RMSE Score RMSE Score
+DSSANN ( Xu et al., 2022 ) 69.22 241,073 55.88 23,769 70.21 204,064 49.87 15,259
+DCRN ( Shang et al., 2024 ) 63.47 145,054 42.34 6618 62.41 104,805 40.63 8511
+LSTM-DANN ( Costa et al., 2020 ) 45.76 76,521 33.23 9178 44.82 89,734 33.95 6731
+LSTM-ADDA ( Duan et al., 2022 ) 46.81 41,399 37.10 17,374 42.34 20,392 35.35 11,956
+LSTM-FT ( Zhang et al., 2018 ) 38.98 17,983 35.34 7071 40.55 18,177 38.09 7592
+MAML ( Mo et al., 2023 ) 36.23 10,801 32.73 5664 36.86 11,665 33.12 5356
+MAML w/ task embeddings 32.06 7678 30.89 4036 32.37 7855 31.70 4145
+imp 11.51 % 28.91 % 5.62 % 28.74 % 12.18 % 32.66 % 4.29 % 22.61 %
+Table 19 
+Comparison experiments with the established prognostic frameworks in FD002→FD003, FD003→FD002, FD001→FD004, and FD004→FD001.
+Frameworks FD002→FD003 FD003→FD002 FD001→FD004 FD004→FD001
+RMSE Score RMSE Score RMSE Score RMSE Score
+DSSANN ( Xu et al., 2022 ) 58.22 29,816 66.82 191,638 72.46 280,460 50.85 14,034
+DCRN ( Shang et al., 2024 ) 43.56 8811 59.39 96,012 66.72 161,743 41.79 9055
+LSTM-DANN ( Costa et al., 2020 ) 42.19 15,516 43.90 26,545 43.64 55,382 35.73 8724
+LSTM-ADDA ( Duan et al., 2022 ) 39.50 7916 41.76 23,570 44.69 33,271 34.83 47,523
+LSTM-FT ( Zhang et al., 2018 ) 41.03 9147 41.51 21,862 41.36 25,721 37.69 8516
+MAML ( Mo et al., 2023 ) 37.32 6695 37.28 12,740 37.91 13,244 34.28 5872
+MAML w/ task embeddings 33.21 4534 33.16 8965 33.43 9366 32.71 4377
+imp 11.01 % 32.28 % 11.05 % 29.63 % 11.82 % 29.28 % 4.58 % 25.46 %
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+17 
+
+===== PAGE 18 =====
+Data availability
+Data will be made available on request.
+References
+Al-Dulaimi, A., Zabihi, S., Asif, A., Mohammadi, A., 2019. A multimodal and hybrid deep 
+neural network model for remaining useful life estimation. Comput. Ind. 108, 
+186 – 196 .
+Baik, S., Hong, S., Lee, K.M., 2020b. Learning to forget for meta-learning. Conference on 
+Computer Vision and Pattern Recognition. IEEE, pp. 2376 – 2384 .
+Baik, S., Choi, M., Choi, J., Kim, H., Lee, K.M., 2020a. Meta-learning with adaptive 
+hyperparameters. Adv. Neural Inf. Process. Syst. 33, 20755 – 20765 .
+Calvo-Bascones, P., Sanz-Bobi, M.A., 2023. Advanced prognosis methodology based on 
+behavioral indicators and chained sequential memory neural networks with a diesel 
+engine application. Comput. Ind. 144, 103771 .
+Camci, F., Chinnam, R.B., 2010. Health-state estimation and prognostics in machining 
+processes. IEEE Trans. Autom. Sci. Eng. 7, 581 – 597 .
+Chapman, J.W., Lavelle, T.M., Litt, J.S., Guo, T.-H., 2014. A process for the creation of T- 
+MATS propulsion system models from NPSS data. AIAA/ASME/SAE/ASEE Joint 
+Propulsion Conference, pp. 3931 – 3939 .
+Costa, P.R., de, O., da, Akçay, A., Zhang, Y., Kaymak, U., 2020. Remaining useful lifetime 
+prediction via deep domain adaptation. Reliab. Eng. Syst. Saf. 195, 106682 .
+Ding, P., Jia, M., Zhao, X., 2021. Meta deep learning based rotating machinery health 
+prognostics toward few-shot prognostics. Appl. Soft Comput. 104, 107211 .
+Du, N.H., Long, N.H., Ha, K.N., Hoang, N.V., Huong, T.T., Tran, K.P., 2023. Trans-lighter: 
+a light-weight federated learning-based architecture for remaining useful lifetime 
+prediction. Comput. Ind. 148, 103888 .
+Duan, Y., Xiao, J., Li, H., Zhang, J., 2022. Cross-domain remaining useful life prediction 
+based on adversarial training. Machines 10, 438 .
+Eshratifar, A.E., Eigen, D., Pedram, M. 2018. Gradient Agreement as an Optimization 
+Objective for Meta-Learning. arXiv preprint arXiv: 1810.08178.
+Eshratifar, A.E., Abrishami, M.S., Eigen, D., Pedram, M., 2019. A meta-learning approach 
+for custom model training. AAAI Conference on Artificial Intelligence. AAAI Press, 
+pp. 9937 – 9938 .
+Falcon, A., D ’ Agostino, G., Lanz, O., Brajnik, G., Tasso, C., Serra, G., 2022. Neural turing 
+machines for the remaining useful life estimation problem. Comput. Ind. 143, 
+103762 .
+Fan, Y., Nowaczyk, S., Rognvaldsson, T., 2020. Transfer learning for remaining useful life 
+prediction based on consensus self-organizing models. Reliab. Eng. Syst. Saf. 203, 
+107098 .
+Feng, Y., Chen, J., Zhang, T., He, S., Xu, E., Zhou, Z., 2022. Semi-supervised meta- 
+learning networks with squeeze-and-excitation attention for few-shot fault diagnosis. 
+ISA Trans. 120, 383 – 401 .
+Finn, C., Abbeel, P., Levine, S., 2017. Model-agnostic meta-learning for fast adaptation of 
+deep networks. International Conference on Machine Learning. PMLR, 
+pp. 1856 – 1868 .
+Flennerhag, S., Rusu, A.A., Pascanu, R., Visin, F., Yin, H., Hadsell, R., 2020. Meta- 
+learning with warped gradient descent. International Conference on Learning 
+Representations, pp. 1 – 28 .
+Fu, S., Zhang, Y., Lin, L., Zhao, M., Zhong, S., 2021. Deep residual LSTM with domain- 
+invariance for remaining useful life prediction across domains. Reliab. Eng. Syst. Saf. 
+216, 108012 .
+Gribbestad, M., Hassan, M.U., Hameed, I.A., 2021. Transfer learning for prognostics and 
+health management (PHM) of marine air compressors. J. Mar. Sci. Eng. 9, 47 .
+Li, X., Ding, Q., Sun, J.-Q., 2018. Remaining useful life estimation in prognostics using 
+deep convolution neural networks. Reliab. Eng. Syst. Saf. 172, 1 – 11 .
+Li, Y., Han, T., Xia, T., Chen, Z., Pan, E., 2023. A CM & CP framework with a GIACC 
+method and an ensemble model for remaining useful life prediction. Comput. Ind. 
+144, 103794 .
+Lu, X., Yao, X., Jiang, Q., Shen, Y., Xu, F., Zhu, Q., 2025. Remaining useful life prediction 
+model of cross-domain rolling bearing via dynamic hybrid domain adaptation and 
+attention contrastive learning. Comput. Ind. 164, 104172 .
+Luo, Q., Chang, Y., Chen, J., Jing, H., Lv, H., Pan, T., 2020. Multiple degradation mode 
+analysis via gated recurrent unit mode recognizer and life predictors for complex 
+equipment. Comput. Ind. 123, 103332 .
+Ma, Y., Zhao, S., Wang, W., Li, Y., King, I., 2022. Multimodality in meta-learning: a 
+comprehensive survey. Knowl. Based Syst. 250, 108976 .
+M ´arquez, A.C., Alberca, J.A.M., Castillo, A.C. del, 2023. Simulating dynamic RUL based 
+CBM scheduling. A case study in the railway sector. Comput. Ind. 148, 103914 .
+Mishra, N., Rohaninejad, M., Chen, X., Abbeel, P., 2018. A simple neural attentive meta- 
+learner. International Conference on Learning Representations, pp. 1 – 20 .
+Mo, Y., Li, L., Huang, B., Li, X., 2023. Few-shot RUL estimation based on model-agnostic 
+meta-learning. J. Intell. Manuf. 34, 2359 – 2372 .
+Nejjar, I., Geissmann, F., Zhao, M., Taal, C., Fink, O., 2024. Domain adaptation via 
+alignment of operation profile for remaining useful lifetime prediction. Reliab. Eng. 
+Syst. Saf. 242, 109718 .
+Nichol, A., Achiam, J., Schulman, J., 2018. On First-Order Meta-Learning Algorithms. 
+arXiv preprint arXiv: 1803.02999.
+Oh, J., Yoo, H., Kim, C., Yun, S.-Y., 2021. Boil: towards representation change for few- 
+shot learning. International Conference on Learning Representations, pp. 1 – 24 .
+Pan, S.J., Yang, Q., 2010. A survey on transfer learning. IEEE Trans. Knowl. Data Eng. 22, 
+1345 – 1359 .
+Pan, T., Chen, J., Ye, Z., Li, A., 2022. A multi-head attention network with adaptive meta- 
+transfer learning for RUL prediction of rocket engines. Reliab. Eng. Syst. Saf. 225, 
+108610 .
+Perez, E., Strub, F., de Vries, H., Dumoulin, V., Courville, A., 2018. FiLM: visual 
+reasoning with a general conditioning layer. AAAI Conference on Artificial 
+Intelligence. AAAI Press, pp. 3942 – 3951 .
+Ping, G., Chen, J., Pan, T., Pan, J., 2019. Degradation feature extraction using multi- 
+source monitoring data via logarithmic normal distribution based variational auto- 
+encoder. Comput. Ind. 109, 72 – 82 .
+Raghu, A., Raghu, M., Bengio, S., Vinyals, O., 2020. Rapid learning or feature reuse? 
+Towards understanding the effectiveness of maml. International Conference on 
+Learning Representations, pp. 1 – 21 .
+Rusu, A.A., Rao, D., Sygnowski, J., Vinyals, O., Pascanu, R., Osindero, S., Hadsell, R., 
+2019. Meta-learning with latent embedding optimization. International Conference 
+on Learning Representations, pp. 1 – 11 .
+Saxena, A., Goebel, K., Simon, D., Eklund, N., 2008. Damage propagation modeling for 
+aircraft engine run-to-failure simulation. International Conference on Prognostics 
+and Health Management. IEEE, pp. 1 – 9 .
+Schwartz, S., Jim ´enez, J.J.M., Vingerhoeds, R., Salaün, M., 2022. An unsupervised 
+approach for health index building and for similarity-based remaining useful life 
+estimation. Comput. Ind. 141, 103716 .
+Shang, J., Xu, D., Qiu, H., Gao, L., Jiang, C., Yi, P., 2024. A novel data augmentation 
+framework for remaining useful life estimation with dense convolutional regression 
+network. J. Manuf. Syst. 74, 30 – 40 .
+Shao, H., Zhou, X., Lin, J., Liu, B., 2024. Few-shot cross-domain fault diagnosis of bearing 
+driven by Task-Supervised ANIL. IEEE Internet Things J. 11, 22892 – 22902 .
+Soualhi, M., Nguyen, K.T.P., Medjaher, K., Nejjari, F., Puig, V., Blesa, J., Quevedo, J., 
+Marlasca, F., 2023. Dealing with prognostics uncertainties: combination of direct 
+and recursive remaining useful life estimations. Comput. Ind. 144, 103766 .
+Souza, M.L.H., Costa, C.A. da, Ramos, G. de O., 2023. A machine-learning based data- 
+oriented pipeline for prognosis and health management systems. Comput. Ind. 148, 
+103903 .
+Wang, Y., Yao, Q., Kwok, J.T., Ni, L.M., 2020. Generalizing from a few examples: a 
+survey on few-shot learning. ACM Comput. Surv. 53 .
+Xu, D., Qiu, H., Gao, L., Yang, Z., Wang, D., 2022. A novel dual-stream self-attention 
+neural network for remaining useful life estimation of mechanical systems. Reliab. 
+Eng. Syst. Saf. 222, 108444 .
+Yang, T., Tang, T., Wang, J., Qiu, C., Chen, M., 2022. A novel cross-domain fault 
+diagnosis method based on model agnostic meta-learning. Measurement 199, 
+111564 .
+Zeiler, M.D., Fergus, R., 2014. Visualizing and understanding convolutional networks. 
+European Conference on Computer Vision. Springer, pp. 818 – 833 .
+Zhang, A., Wang, H., Li, S., Cui, Y., Liu, Z., Yang, G., Hu, J., 2018. Transfer learning with 
+deep recurrent neural networks for remaining useful life estimation. Appl. Sci. 8, 
+2416 .
+Zhang, B., Zhang, S., Li, W., 2019. Bearing performance degradation assessment using 
+long short-term memory recurrent network. Comput. Ind. 106, 14 – 29 .
+Zhang, L., Gao, X., 2024. Transfer adaptation learning: a decade survey. IEEE Trans. 
+Neural Netw. Learn. Syst. 35, 23 – 44 .
+Zintgraf, L., Shiarli, K., Kurin, V., Hofmann, K., Whiteson, S., 2019. Fast context 
+adaptation via Meta-learning. International Conference on Machine Learning. PMLR, 
+pp. 7693 – 7702 .
+X. Shang et al.                                                                                                                                                                                                                                   Computers in Industry 173 (2025) 104396 
+18 
