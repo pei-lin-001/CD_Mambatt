@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader
 
@@ -20,6 +21,7 @@ from cd_mambatt.data import (
 )
 from cd_mambatt.losses import (
     DomainDiscriminator,
+    conditional_gaussian_mmd_loss,
     compute_domain_adversarial_loss,
     cross_domain_contrastive_loss,
     gaussian_mmd_loss,
@@ -51,14 +53,39 @@ def model_forward_with_aux(model: nn.Module, windows: torch.Tensor) -> dict[str,
     if hasattr(model, "forward_features_with_aux"):
         outputs = model.forward_features_with_aux(windows)
         if isinstance(outputs, dict):
+            if hasattr(model, "predict_from_output_dict"):
+                prediction_dict = model.predict_from_output_dict(outputs)
+                outputs = {**outputs, **prediction_dict}
             return outputs
     features = model.forward_features(windows)
     return {
         "features": features,
         "domain_features": features,
         "pre_transformer_features": features,
+        "invariant_features": features,
+        "specific_features": torch.zeros_like(features),
+        "prediction": model.predict_from_features(features),
+        "prediction_inv": model.predict_from_features(features),
+        "prediction_spec": features.new_zeros((features.shape[0],)),
         "gate_mean": features.new_zeros(()),
     }
+
+
+def select_stage_features(outputs: dict[str, torch.Tensor], mode: str) -> torch.Tensor:
+    if mode == "combined":
+        return outputs["features"]
+    if mode == "invariant":
+        return outputs.get("invariant_features", outputs["features"])
+    raise ValueError(f"Unsupported stage feature mode: {mode}")
+
+
+def inv_spec_orthogonality_loss(invariant_features: torch.Tensor, specific_features: torch.Tensor) -> torch.Tensor:
+    if invariant_features.ndim != 2 or specific_features.ndim != 2:
+        raise ValueError("Orthogonality loss expects 2D feature tensors")
+    invariant_norm = F.normalize(invariant_features, p=2, dim=1)
+    specific_norm = F.normalize(specific_features, p=2, dim=1)
+    cosine = (invariant_norm * specific_norm).sum(dim=1)
+    return (cosine * cosine).mean()
 
 
 def resolve_grl_lambda(epoch: int, total_epochs: int, *, base_lambda: float, warmup_epochs: int) -> float:
@@ -185,6 +212,7 @@ def collect_source_stage_statistics(
     num_stages: int,
     quantile: float,
     normalize_features: bool,
+    stage_feature_mode: str,
 ) -> SourceStageStatistics:
     model.eval()
     feature_batches: list[torch.Tensor] = []
@@ -195,7 +223,7 @@ def collect_source_stage_statistics(
         for windows, targets in source_loader:
             windows = windows.to(device, non_blocking=True)
             outputs = model_forward_with_aux(model, windows)
-            features = outputs["features"].detach().cpu()
+            features = select_stage_features(outputs, stage_feature_mode).detach().cpu()
             rul_values = targets.detach().cpu()
             stage_labels = assign_rul_stage_labels(rul_values, rul_clip=rul_clip, num_stages=num_stages).cpu()
             feature_batches.append(features)
@@ -276,6 +304,9 @@ def run_cd_pseudo_epoch(
     lambda_monotonic: float,
     lambda_domain_adv: float,
     lambda_inv_mmd: float,
+    lambda_conditional_inv_mmd: float,
+    lambda_inv_spec_orth: float,
+    lambda_spec_residual: float,
     rul_clip: float,
     num_pseudo_stages: int,
     target_scale: float,
@@ -288,6 +319,7 @@ def run_cd_pseudo_epoch(
     grl_lambda: float,
     inv_alignment_mode: str,
     domain_feature_tap: str,
+    stage_feature_mode: str,
 ) -> dict[str, float]:
     is_train = optimizer is not None
     model.train(is_train)
@@ -317,6 +349,9 @@ def run_cd_pseudo_epoch(
     total_monotonic_loss = 0.0
     total_domain_adv_loss = 0.0
     total_inv_mmd_loss = 0.0
+    total_conditional_inv_mmd_loss = 0.0
+    total_inv_spec_orth_loss = 0.0
+    total_spec_residual_loss = 0.0
     total_combined_loss = 0.0
     total_pseudo_candidates = 0
     total_pseudo_accepted = 0
@@ -354,7 +389,8 @@ def run_cd_pseudo_epoch(
 
             source_outputs = model_forward_with_aux(model, source_windows)
             source_features = source_outputs["features"]
-            source_predictions = model.predict_from_features(source_features)
+            source_stage_features = select_stage_features(source_outputs, stage_feature_mode)
+            source_predictions = source_outputs["prediction"]
             source_loss = mse_loss(source_predictions, source_targets)
 
             source_stage_labels = assign_rul_stage_labels(
@@ -362,12 +398,13 @@ def run_cd_pseudo_epoch(
                 rul_clip=rul_clip,
                 num_stages=num_pseudo_stages,
             )
-            source_stage_logits = stage_head(source_features)
+            source_stage_logits = stage_head(source_stage_features)
             source_stage_loss = ce_loss(source_stage_logits, source_stage_labels)
 
             target_labeled_outputs = model_forward_with_aux(model, target_labeled_windows)
             target_labeled_features = target_labeled_outputs["features"]
-            target_predictions = model.predict_from_features(target_labeled_features)
+            target_labeled_stage_features = select_stage_features(target_labeled_outputs, stage_feature_mode)
+            target_predictions = target_labeled_outputs["prediction"]
             target_loss = mse_loss(target_predictions, target_labeled_targets)
             target_labeled_stage_labels = assign_rul_stage_labels(
                 target_labeled_targets_raw,
@@ -377,11 +414,12 @@ def run_cd_pseudo_epoch(
 
             target_unlabeled_outputs = model_forward_with_aux(model, target_unlabeled_windows)
             target_unlabeled_features = target_unlabeled_outputs["features"]
+            target_unlabeled_stage_features = select_stage_features(target_unlabeled_outputs, stage_feature_mode)
             target_global_alignment_features = torch.cat([target_labeled_features, target_unlabeled_features], dim=0)
             mmd_loss = gaussian_mmd_loss(source_features, target_global_alignment_features, sigmas=mmd_sigmas)
 
             pseudo_stage_labels, accepted_mask, pseudo_distances = assign_pseudo_stage_labels(
-                target_unlabeled_features,
+                target_unlabeled_stage_features,
                 stage_statistics,
             )
             accepted_count = int(accepted_mask.sum().item())
@@ -389,7 +427,7 @@ def run_cd_pseudo_epoch(
             total_pseudo_candidates += candidate_count
             total_pseudo_accepted += accepted_count
             if accepted_count > 0:
-                accepted_logits = stage_head(target_unlabeled_features[accepted_mask])
+                accepted_logits = stage_head(target_unlabeled_stage_features[accepted_mask])
                 pseudo_loss = ce_loss(accepted_logits, pseudo_stage_labels[accepted_mask])
                 total_pseudo_distance += float(pseudo_distances[accepted_mask].sum().detach().cpu())
             else:
@@ -454,6 +492,50 @@ def run_cd_pseudo_epoch(
                     "target_domain_accuracy": 0.0,
                 }
 
+            if lambda_conditional_inv_mmd > 0:
+                source_invariant_features = source_outputs.get("invariant_features", source_stage_features)
+                target_conditional_features = [target_labeled_outputs.get("invariant_features", target_labeled_stage_features)]
+                target_conditional_labels = [target_labeled_stage_labels]
+                if accepted_count > 0:
+                    target_conditional_features.append(target_unlabeled_outputs.get("invariant_features", target_unlabeled_stage_features)[accepted_mask])
+                    target_conditional_labels.append(pseudo_stage_labels[accepted_mask])
+                conditional_inv_mmd_loss = conditional_gaussian_mmd_loss(
+                    source_invariant_features,
+                    source_stage_labels,
+                    torch.cat(target_conditional_features, dim=0),
+                    torch.cat(target_conditional_labels, dim=0),
+                    sigmas=mmd_sigmas,
+                )
+            else:
+                conditional_inv_mmd_loss = source_features.new_zeros(())
+
+            if lambda_inv_spec_orth > 0:
+                inv_spec_orth_loss = (
+                    inv_spec_orthogonality_loss(
+                        source_outputs.get("invariant_features", source_features),
+                        source_outputs.get("specific_features", torch.zeros_like(source_features)),
+                    )
+                    + inv_spec_orthogonality_loss(
+                        target_labeled_outputs.get("invariant_features", target_labeled_features),
+                        target_labeled_outputs.get("specific_features", torch.zeros_like(target_labeled_features)),
+                    )
+                    + inv_spec_orthogonality_loss(
+                        target_unlabeled_outputs.get("invariant_features", target_unlabeled_features),
+                        target_unlabeled_outputs.get("specific_features", torch.zeros_like(target_unlabeled_features)),
+                    )
+                ) / 3.0
+            else:
+                inv_spec_orth_loss = source_features.new_zeros(())
+
+            if lambda_spec_residual > 0:
+                spec_residual_loss = (
+                    source_outputs["prediction_spec"].pow(2).mean()
+                    + target_labeled_outputs["prediction_spec"].pow(2).mean()
+                    + target_unlabeled_outputs["prediction_spec"].pow(2).mean()
+                ) / 3.0
+            else:
+                spec_residual_loss = source_features.new_zeros(())
+
             total_loss = (
                 source_loss_weight * source_loss
                 + target_loss_weight * target_loss
@@ -464,6 +546,9 @@ def run_cd_pseudo_epoch(
                 + lambda_monotonic * monotonic_loss
                 + lambda_domain_adv * domain_adv_loss
                 + lambda_inv_mmd * inv_mmd_loss
+                + lambda_conditional_inv_mmd * conditional_inv_mmd_loss
+                + lambda_inv_spec_orth * inv_spec_orth_loss
+                + lambda_spec_residual * spec_residual_loss
             )
 
             if is_train:
@@ -489,6 +574,9 @@ def run_cd_pseudo_epoch(
             total_monotonic_loss += float(monotonic_loss.detach().cpu()) * batch_examples
             total_domain_adv_loss += float(domain_adv_loss.detach().cpu()) * batch_examples
             total_inv_mmd_loss += float(inv_mmd_loss.detach().cpu()) * batch_examples
+            total_conditional_inv_mmd_loss += float(conditional_inv_mmd_loss.detach().cpu()) * batch_examples
+            total_inv_spec_orth_loss += float(inv_spec_orth_loss.detach().cpu()) * batch_examples
+            total_spec_residual_loss += float(spec_residual_loss.detach().cpu()) * batch_examples
             total_combined_loss += float(total_loss.detach().cpu()) * batch_examples
             total_contrastive_valid_anchor_ratio += float(contrastive_stats["valid_anchor_ratio"]) * batch_examples
             total_contrastive_positive_count += float(contrastive_stats["mean_positive_count"]) * batch_examples
@@ -513,6 +601,9 @@ def run_cd_pseudo_epoch(
         "monotonic_loss": total_monotonic_loss / total_examples,
         "domain_adv_loss": total_domain_adv_loss / total_examples,
         "inv_mmd_loss": total_inv_mmd_loss / total_examples,
+        "conditional_inv_mmd_loss": total_conditional_inv_mmd_loss / total_examples,
+        "inv_spec_orth_loss": total_inv_spec_orth_loss / total_examples,
+        "spec_residual_loss": total_spec_residual_loss / total_examples,
         "total_loss": total_combined_loss / total_examples,
         "pseudo_acceptance_ratio": pseudo_acceptance_ratio,
         "pseudo_mean_distance": mean_pseudo_distance,
@@ -624,6 +715,7 @@ def fit_cd_pseudo_stage(
             num_stages=args.num_pseudo_stages,
             quantile=stage_quantile,
             normalize_features=not args.disable_pseudo_feature_normalization,
+            stage_feature_mode=str(args.stage_feature_mode),
         )
         train_stats = run_cd_pseudo_epoch(
             model,
@@ -645,6 +737,9 @@ def fit_cd_pseudo_stage(
             lambda_monotonic=args.lambda_monotonic,
             lambda_domain_adv=args.lambda_domain_adv,
             lambda_inv_mmd=effective_lambda_inv_mmd,
+            lambda_conditional_inv_mmd=float(args.lambda_conditional_inv_mmd),
+            lambda_inv_spec_orth=float(args.lambda_inv_spec_orth),
+            lambda_spec_residual=float(args.lambda_spec_residual),
             rul_clip=float(args.rul_clip),
             num_pseudo_stages=args.num_pseudo_stages,
             target_scale=target_scale,
@@ -657,6 +752,7 @@ def fit_cd_pseudo_stage(
             grl_lambda=current_grl_lambda,
             inv_alignment_mode=str(args.inv_alignment_mode),
             domain_feature_tap=str(args.domain_feature_tap),
+            stage_feature_mode=str(args.stage_feature_mode),
         )
         val_metrics = evaluate(model, target_loaders["val"], device, target_scale)
         record = {
@@ -673,6 +769,9 @@ def fit_cd_pseudo_stage(
             "train_monotonic_loss": train_stats["monotonic_loss"],
             "train_domain_adv_loss": train_stats["domain_adv_loss"],
             "train_inv_mmd_loss": train_stats["inv_mmd_loss"],
+            "train_conditional_inv_mmd_loss": train_stats["conditional_inv_mmd_loss"],
+            "train_inv_spec_orth_loss": train_stats["inv_spec_orth_loss"],
+            "train_spec_residual_loss": train_stats["spec_residual_loss"],
             "pseudo_acceptance_ratio": train_stats["pseudo_acceptance_ratio"],
             "pseudo_mean_distance": train_stats["pseudo_mean_distance"],
             "pseudo_stage_quantile": stage_quantile,
@@ -697,6 +796,9 @@ def fit_cd_pseudo_stage(
             "lambda_monotonic": args.lambda_monotonic,
             "lambda_domain_adv": args.lambda_domain_adv,
             "lambda_inv_mmd": effective_lambda_inv_mmd,
+            "lambda_conditional_inv_mmd": args.lambda_conditional_inv_mmd,
+            "lambda_inv_spec_orth": args.lambda_inv_spec_orth,
+            "lambda_spec_residual": args.lambda_spec_residual,
         }
         history.append(record)
         print(json.dumps(record, ensure_ascii=False))
@@ -756,11 +858,15 @@ def train_one_seed(
     run_dir.mkdir(parents=True, exist_ok=True)
     target_scale = float(args.target_scale)
     grad_clip_norm = None if args.grad_clip_norm <= 0 else float(args.grad_clip_norm)
+    source_model_args = args
+    if str(args.mamba_block_mode) == "dd_spd" and str(args.spd_predictor_mode) == "decomposed_residual":
+        source_model_args = argparse.Namespace(**vars(args))
+        source_model_args.spd_predictor_mode = "shared_head"
 
     source_split = load_or_create_source_split(args, source_train_full, task_output_dir, seed)
     source_loaders, source_meta = build_source_stage_data(args, source_train_full, source_test_raw, source_split)
 
-    base_model = build_model(args, int(source_meta["train_windows_shape"][2])).to(device)
+    base_model = build_model(source_model_args, int(source_meta["train_windows_shape"][2])).to(device)
     source_stage = fit_source_stage(args, seed, base_model, source_loaders, device, run_dir, target_scale, grad_clip_norm)
     source_test_metrics = evaluate(base_model, source_loaders["test"], device, target_scale)
     target_direct_loader, target_direct_meta = build_target_direct_test_loader(args, target_train_full, target_test_raw)
@@ -780,7 +886,16 @@ def train_one_seed(
 
     cd_model = build_model(args, int(source_meta["train_windows_shape"][2])).to(device)
     source_checkpoint = torch.load(source_stage["checkpoint"], map_location=device)
-    cd_model.load_state_dict(source_checkpoint["model_state_dict"])
+    if str(args.spd_predictor_mode) == "decomposed_residual":
+        cd_model.load_state_dict(source_checkpoint["model_state_dict"], strict=False)
+        if getattr(cd_model, "inv_head", None) is not None and "head.weight" in source_checkpoint["model_state_dict"]:
+            with torch.no_grad():
+                cd_model.inv_head.weight.copy_(source_checkpoint["model_state_dict"]["head.weight"])
+                cd_model.inv_head.bias.copy_(source_checkpoint["model_state_dict"]["head.bias"])
+                nn.init.zeros_(cd_model.spec_head.weight)
+                nn.init.zeros_(cd_model.spec_head.bias)
+    else:
+        cd_model.load_state_dict(source_checkpoint["model_state_dict"])
     cd_stage = fit_cd_pseudo_stage(
         args,
         seed,
@@ -837,9 +952,14 @@ def train_one_seed(
             "lambda_monotonic": float(args.lambda_monotonic),
             "lambda_domain_adv": float(args.lambda_domain_adv),
             "lambda_inv_mmd": float(resolve_inv_mmd_lambda(args)),
+            "lambda_conditional_inv_mmd": float(args.lambda_conditional_inv_mmd),
+            "lambda_inv_spec_orth": float(args.lambda_inv_spec_orth),
+            "lambda_spec_residual": float(args.lambda_spec_residual),
             "inv_alignment_mode": str(args.inv_alignment_mode),
             "adaptation_freeze_mode": str(args.adaptation_freeze_mode),
             "adaptation_freeze_epochs": int(getattr(args, "adaptation_freeze_epochs", 0)),
+            "stage_feature_mode": str(args.stage_feature_mode),
+            "spd_predictor_mode": str(args.spd_predictor_mode),
             "domain_feature_tap": str(args.domain_feature_tap),
             "grl_lambda": float(args.grl_lambda),
             "grl_warmup_epochs": int(args.grl_warmup_epochs),
@@ -872,6 +992,9 @@ def train_one_seed(
             "best_domain_accuracy": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"]["domain_accuracy"]),
             "best_gate_mean": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("gate_mean", 0.0)),
             "best_inv_mmd_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_inv_mmd_loss", 0.0)),
+            "best_conditional_inv_mmd_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_conditional_inv_mmd_loss", 0.0)),
+            "best_inv_spec_orth_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_inv_spec_orth_loss", 0.0)),
+            "best_spec_residual_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_spec_residual_loss", 0.0)),
             "best_active_adaptation_freeze_mode": None if cd_stage["best_record"] is None else str(cd_stage["best_record"].get("active_adaptation_freeze_mode", "")),
             "uses_domain_adv": bool(cd_stage["uses_domain_adv"]),
             "uses_inv_mmd_alignment": bool(str(args.inv_alignment_mode) == "mmd" and resolve_inv_mmd_lambda(args) > 0),
@@ -907,9 +1030,14 @@ def summarize_results(run_results: list[dict[str, object]], args: argparse.Names
         "lambda_monotonic": float(args.lambda_monotonic),
         "lambda_domain_adv": float(args.lambda_domain_adv),
         "lambda_inv_mmd": float(resolve_inv_mmd_lambda(args)),
+        "lambda_conditional_inv_mmd": float(args.lambda_conditional_inv_mmd),
+        "lambda_inv_spec_orth": float(args.lambda_inv_spec_orth),
+        "lambda_spec_residual": float(args.lambda_spec_residual),
         "inv_alignment_mode": str(args.inv_alignment_mode),
         "adaptation_freeze_mode": str(args.adaptation_freeze_mode),
         "adaptation_freeze_epochs": int(getattr(args, "adaptation_freeze_epochs", 0)),
+        "stage_feature_mode": str(args.stage_feature_mode),
+        "spd_predictor_mode": str(args.spd_predictor_mode),
         "domain_feature_tap": str(args.domain_feature_tap),
         "grl_lambda": float(args.grl_lambda),
         "grl_warmup_epochs": int(args.grl_warmup_epochs),
@@ -978,6 +1106,9 @@ def main() -> None:
     parser.add_argument("--inv-alignment-mode", choices=("grl", "mmd", "none"), default="grl", help="Invariant-path alignment mode for SPD: gradient reversal, direct MMD, or disabled")
     parser.add_argument("--lambda-domain-adv", type=float, default=0.1, help="Weight for SPD invariant-path domain-adversarial loss")
     parser.add_argument("--lambda-inv-mmd", type=float, default=0.0, help="Weight for SPD invariant-path MMD alignment; when <= 0 and --inv-alignment-mode=mmd, reuse --lambda-domain-adv")
+    parser.add_argument("--lambda-conditional-inv-mmd", type=float, default=0.0, help="Weight for stage-conditional MMD on the invariant branch")
+    parser.add_argument("--lambda-inv-spec-orth", type=float, default=0.0, help="Weight for invariant/specific feature orthogonality regularization")
+    parser.add_argument("--lambda-spec-residual", type=float, default=0.0, help="Weight for residual-size regularization on the specific prediction branch")
     parser.add_argument(
         "--adaptation-freeze-mode",
         choices=("none", "head_only", "spec_gate_only", "spec_gate_head", "spec_gate_transformer_head"),
@@ -995,6 +1126,7 @@ def main() -> None:
     parser.add_argument("--domain-feature-tap", choices=("inv_mean", "pre_transformer_last", "concat_inv_pre"), default="pre_transformer_last", help="Feature tap point used by the SPD invariant-alignment branch")
     parser.add_argument("--domain-adv-hidden-dim", type=int, default=16, help="Hidden dimension of the SPD domain discriminator")
     parser.add_argument("--domain-adv-dropout", type=float, default=0.0, help="Dropout used inside the SPD domain discriminator")
+    parser.add_argument("--stage-feature-mode", choices=("combined", "invariant"), default="combined", help="Feature branch used for stage statistics and stage classification")
     parser.add_argument("--contrastive-temperature", type=float, default=0.1, help="Temperature used in cross-domain contrastive loss")
     parser.add_argument("--disable-contrastive-feature-normalization", action="store_true", help="Disable L2 normalization before cross-domain contrastive similarity")
     parser.add_argument("--monotonic-margin", type=float, default=0.0, help="Margin used in the local monotonicity ranking loss")
@@ -1018,6 +1150,7 @@ def main() -> None:
     parser.add_argument("--transformer-inner-dropout", type=float, default=0.0, help="Dropout applied inside Transformer residual branches")
     parser.add_argument("--mamba-block-mode", choices=("bare", "prenorm_residual", "dd_spd"), default="dd_spd", help="Mamba block mode used in v3; dd_spd is the intended SPD setting")
     parser.add_argument("--spd-gate-init-bias", type=float, default=-2.0, help="Initial bias for the SPD specific-path gate")
+    parser.add_argument("--spd-predictor-mode", choices=("shared_head", "decomposed_residual"), default="shared_head", help="Prediction head mode for SPD: original shared head or invariant-main plus specific-residual decomposition")
     parser.add_argument("--source-val-all-windows", action="store_true", help="Validate source stage on all source validation windows")
     parser.add_argument("--target-val-all-windows", action="store_true", help="Validate target adaptation stage on all target validation windows")
     parser.add_argument("--device", default="auto", help="auto, cuda, or cpu")

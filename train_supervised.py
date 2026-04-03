@@ -216,6 +216,7 @@ def build_model(args: argparse.Namespace, input_dim: int) -> MambAttRegressor:
         transformer_inner_dropout=args.transformer_inner_dropout,
         mamba_block_mode=args.mamba_block_mode,
         spd_gate_init_bias=float(getattr(args, "spd_gate_init_bias", -2.0)),
+        spd_predictor_mode=str(getattr(args, "spd_predictor_mode", "shared_head")),
     )
 
 

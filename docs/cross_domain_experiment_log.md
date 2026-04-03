@@ -1955,3 +1955,142 @@ formal protocol.
     - the next SPD iteration should move toward stronger structural separation
       or more informative auxiliary objectives, rather than another small
       freeze-pattern sweep
+
+### 11.20 Semantic-SPD code redesign: invariant-main + specific-residual predictor
+
+- date: 2026-04-03
+- Git safety checkpoint before redesign:
+  - commit: `17bdc79`
+  - message:
+    - `chore: snapshot project before dd-mamba redesign`
+- code changes:
+  - `cd_mambatt/models/mambatt.py`
+    - added `spd_predictor_mode = decomposed_residual`
+    - added `inv_head` + `spec_head`
+    - total prediction becomes:
+      - `pred = pred_inv + pred_spec`
+    - `spec` is explicitly treated as a residual branch
+    - exposed:
+      - `invariant_features`
+      - `specific_features`
+      - `prediction_inv`
+      - `prediction_spec`
+  - `cd_mambatt/losses/mmd.py`
+    - added stage-conditional Gaussian MMD
+  - `train_cd_mambatt_v3.py`
+    - added:
+      - `--spd-predictor-mode`
+      - `--stage-feature-mode`
+      - `--lambda-conditional-inv-mmd`
+      - `--lambda-inv-spec-orth`
+      - `--lambda-spec-residual`
+    - stage statistics and pseudo-stage assignment can now use the invariant branch
+    - added orthogonality loss between invariant and specific features
+    - added residual-size regularization on `prediction_spec`
+
+- motivation:
+  - stop blind loss-weight sweeping
+  - test the first novelty-driven redesign suggested by
+    `docs/innovation_novelty_assessment.md`:
+    - invariant branch should carry the main RUL trend
+    - specific branch should only provide residual correction
+    - alignment should move from generic global matching toward
+      degradation-stage-aware invariant alignment
+
+### 11.21 Semantic-SPD pilot v1: pure stage-conditional invariant alignment
+
+- date: 2026-04-03
+- output:
+  - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_fd001_to_fd003_2seeds_semanticspd_condinvmmd01_orth001_spec1e4/FD001_TO_FD003/summary.json`
+- protocol:
+  - task = `FD001 -> FD003`
+  - seeds = `42, 43`
+  - `spd_predictor_mode = decomposed_residual`
+  - `stage_feature_mode = invariant`
+  - `lambda_conditional_inv_mmd = 0.1`
+  - `lambda_inv_spec_orth = 0.01`
+  - `lambda_spec_residual = 1e-4`
+  - `lambda_mmd = 0.0`
+  - `lambda_inv_mmd = 0.0`
+  - `inv_alignment_mode = none`
+- summary:
+  - mean direct RMSE = **47.1927 ± 1.7779**
+  - mean adapted RMSE = **26.2643 ± 1.5596**
+- interpretation:
+  - the first semantic-SPD implementation is **numerically stable** but clearly
+    underperforms the previous best SPD setting
+  - the direct-transfer line deteriorates strongly, showing that naïvely using
+    the decomposed predictor already changes the backbone behavior too much
+  - the specific residual penalty was far too weak to prevent the specific head
+    from becoming very large under source pretraining
+
+### 11.22 Semantic-SPD pilot v2: shared-head source warm start, decomposed head only for adaptation
+
+- date: 2026-04-03
+- code update:
+  - source-stage pretraining now uses the original `shared_head` even when
+    adaptation uses `decomposed_residual`
+  - adaptation model is initialized from the source checkpoint with:
+    - shared backbone weights loaded non-strictly
+    - `inv_head` copied from the pretrained source `head`
+    - `spec_head` reset to zero
+- output:
+  - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_fd001_to_fd003_2seeds_semanticspd_condinvmmd01_orth001_spec1e4_warmstartshared/FD001_TO_FD003/summary.json`
+- protocol:
+  - same as Section 11.21, except:
+    - source pretraining keeps `shared_head`
+    - only the adaptation stage switches to `decomposed_residual`
+- summary:
+  - mean direct RMSE = **42.4143 ± 0.9187**
+  - mean adapted RMSE = **25.0020 ± 1.6918**
+- interpretation:
+  - warm-starting from the stable shared-head source model is the correct design
+    choice; it improves over the naïve semantic-SPD v1 run
+  - however, the result is still much worse than:
+    - best SPD inv-MMD reference:
+      - **23.3498 ± 2.3153**
+    - `CD-MambAtt v2` canonical reference:
+      - **21.1291 ± 1.5928**
+  - the current semantic-SPD decomposition is therefore **conceptually better
+    motivated, but not yet empirically successful**
+
+### 11.23 Semantic-SPD probe v3: reintroduce global MMD on top of conditional invariant alignment
+
+- date: 2026-04-03
+- output:
+  - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_fd001_to_fd003_seed42_semanticspd_condinvmmd01_globalmmd01/FD001_TO_FD003/summary.json`
+- protocol:
+  - seed = `42`
+  - same as Section 11.22, except:
+    - `lambda_mmd = 0.1`
+- result:
+  - direct RMSE = **45.7994**
+  - adapted RMSE = **25.9911**
+- interpretation:
+  - simply restoring the old global MMD on top of the new semantic-SPD losses
+    does **not** recover the lost performance
+  - the main issue is no longer only the alignment weight; it is the current
+    decomposition mechanism itself
+
+### 11.24 Current judgment after the first novelty-driven semantic-SPD round
+
+- date: 2026-04-03
+- main conclusion:
+  - it was worth implementing the first novelty-driven redesign because it gave
+    a much clearer answer than another blind hyperparameter sweep
+  - that answer is:
+    - **the current decomposed predictor formulation is too aggressive / too
+      disruptive**
+- concrete evidence:
+  - semantic-SPD v1 (`2` seeds): **26.2643**
+  - semantic-SPD v2 warm-start (`2` seeds): **25.0020**
+  - previous best SPD inv-MMD (`3` seeds): **23.3498**
+- practical diagnosis:
+  - making the predictor decomposition explicit is a sound research direction
+  - but the present implementation still lets the specific branch / gate become
+    too dominant
+  - the next semantic-SPD revision should be **structurally softer**, for example:
+    - keep source prediction on the stable shared head
+    - use the invariant branch as an auxiliary main trend estimator rather than
+      fully replacing the primary prediction route on day one
+    - delay or weaken residual-branch freedom in early adaptation

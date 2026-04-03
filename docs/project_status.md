@@ -17,8 +17,10 @@ Current status in one paragraph:
 > **matched-shot in-house comparison with remaining protocol mismatches**, not as a
 > fully strict apples-to-apples benchmark. The architecture-level `DD-SSM / SPD`
 > branch is now implemented and runnable on CUDA. The latest finding is that
-> **switching GRL to invariant-path MMD was correct, but simple selective-freezing
-> protocols still do not outperform the stronger non-freeze SPD baseline**.
+> **the first novelty-driven semantic-SPD redesign is conceptually stronger but
+> empirically underperforms the earlier SPD v0 invariant-MMD reference**, so the
+> next step should be a softer semantic decomposition rather than another blind
+> scalar sweep.
 
 ## 2. What is already completed
 
@@ -156,6 +158,48 @@ Interpretation:
 - the next likely issue remains architectural:
   the inv/spec role separation may still be too weak in the current adaptation protocol
 
+### 3.5 Semantic-SPD v1/v2 status on canonical `FD001 -> FD003`
+
+Purpose of this branch:
+
+- move beyond generic feature-level alignment
+- test the novelty-safe direction from `innovation_novelty_assessment.md`
+- make the invariant path semantically responsible for the main RUL trend and
+  restrict the specific path to residual correction
+
+Implemented changes:
+
+- `spd_predictor_mode = decomposed_residual`
+- invariant prediction head `inv_head`
+- specific residual head `spec_head`
+- stage-conditional invariant MMD
+- invariant/specific orthogonality regularization
+- specific residual magnitude regularization
+
+Current semantic-SPD results:
+
+- semantic-SPD v1 (`2` seeds, direct decomposed predictor):
+  - mean direct RMSE = **47.1927**
+  - mean adapted RMSE = **26.2643**
+- semantic-SPD v2 (`2` seeds, source-stage shared-head warm start):
+  - mean direct RMSE = **42.4143**
+  - mean adapted RMSE = **25.0020**
+- semantic-SPD v3 probe (`1` seed, add back global MMD):
+  - direct RMSE = **45.7994**
+  - adapted RMSE = **25.9911**
+- earlier SPD v0 invariant-MMD reference (`3` seeds):
+  - mean adapted RMSE = **23.3498**
+
+Interpretation:
+
+- the semantic redesign is **numerically stable**
+- the shared-head warm-start is the right stabilization move
+- but the current fully decomposed predictor is still **too disruptive**
+- the specific branch becomes too strong and the gate stays too large
+- simply restoring the old global MMD does **not** rescue this branch
+- therefore, the next semantic-SPD iteration should keep the novelty direction
+  but adopt a **softer decomposition protocol**
+
 ## 4. What we can and cannot claim right now
 
 ### Can claim
@@ -164,12 +208,14 @@ Interpretation:
 - `CD-MambAtt v2` clearly improves over direct transfer on multiple C-MAPSS tasks
 - reproduced `FOMLN` exists and current matched-shot numbers favor CD-MambAtt on 4 overlapping tasks
 - `DD-SSM / SPD v0` is implemented inside the Mamba path and validated on CUDA
+- semantic-SPD code path is implemented and trainable on CUDA
 
 ### Cannot claim yet
 
 - exact author-level reproduction of the target paper supervised number
 - strict publication-grade apples-to-apples superiority over `FOMLN`
 - stable architecture-level superiority from the current `SPD v0` branch
+- empirical superiority from the first semantic-SPD redesign
 
 ## 5. Current bottlenecks
 
@@ -177,18 +223,21 @@ Interpretation:
 2. current `CD-MambAtt v2` innovation depth is still insufficient for a strong paper
 3. the original GRL-based SPD branch is unstable across seeds
 4. after replacing GRL with MMD, SPD is more stable but still not clearly better than v2
-5. simple loss-weight tuning around the current SPD scaffold shows diminishing returns
-6. simple selective-freezing / warm-start freeze schedules do not yet produce a net gain
-7. `FOMLN` comparison is useful but still not perfectly fair
-8. `MetaDFKN` remains a reported threat, but protocol ambiguity is not yet cleaned enough for fair reproduction
+5. the first semantic-SPD redesign proves the novelty direction is implementable,
+   but its predictor decomposition is too aggressive and hurts performance
+6. simple loss-weight tuning around the current SPD scaffold shows diminishing returns
+7. simple selective-freezing / warm-start freeze schedules do not yet produce a net gain
+8. `FOMLN` comparison is useful but still not perfectly fair
+9. `MetaDFKN` remains a reported threat, but protocol ambiguity is not yet cleaned enough for fair reproduction
 
 ## 6. Next priority
 
 Current recommended priority order:
 
-1. **stabilize / sharpen SPD v0 at the optimization level**:
-   the next try should move beyond simple freeze-pattern sweeps toward
-   stronger structural constraints or auxiliary objectives inside the inv/spec split
+1. **revise semantic-SPD into a softer decomposition**:
+   keep the novelty claim inside Mamba, but reduce disruption by preserving the
+   stable shared prediction route and adding semantic auxiliary constraints or a
+   bounded residual path instead of a hard predictor replacement
 2. after SPD is stable, add **SSDA** if needed
 3. treat **DAAD** as an auxiliary enhancement, not a co-equal main innovation
 4. baseline track, if resumed, should target a cleaner `MetaDFKN` protocol audit before coding

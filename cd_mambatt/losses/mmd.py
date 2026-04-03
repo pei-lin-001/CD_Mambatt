@@ -33,3 +33,42 @@ def gaussian_mmd_loss(
     k_yy = _gaussian_kernel(target_features, target_features, sigmas_tensor)
     k_xy = _gaussian_kernel(source_features, target_features, sigmas_tensor)
     return k_xx.mean() + k_yy.mean() - 2.0 * k_xy.mean()
+
+
+def conditional_gaussian_mmd_loss(
+    source_features: torch.Tensor,
+    source_labels: torch.Tensor,
+    target_features: torch.Tensor,
+    target_labels: torch.Tensor,
+    *,
+    sigmas: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0),
+) -> torch.Tensor:
+    if source_features.ndim != 2 or target_features.ndim != 2:
+        raise ValueError("Conditional MMD expects 2D feature tensors")
+    if source_labels.ndim != 1 or target_labels.ndim != 1:
+        raise ValueError("Conditional MMD expects 1D label tensors")
+    if source_features.shape[0] != source_labels.shape[0] or target_features.shape[0] != target_labels.shape[0]:
+        raise ValueError("Feature and label batch sizes must match for conditional MMD")
+
+    shared_labels = sorted(set(source_labels.detach().cpu().tolist()) & set(target_labels.detach().cpu().tolist()))
+    if not shared_labels:
+        return source_features.new_zeros(())
+
+    weighted_loss = source_features.new_zeros(())
+    total_weight = 0.0
+    for label in shared_labels:
+        source_mask = source_labels == int(label)
+        target_mask = target_labels == int(label)
+        if not torch.any(source_mask) or not torch.any(target_mask):
+            continue
+        source_stage = source_features[source_mask]
+        target_stage = target_features[target_mask]
+        if source_stage.shape[0] == 0 or target_stage.shape[0] == 0:
+            continue
+        stage_weight = float(source_stage.shape[0] + target_stage.shape[0])
+        weighted_loss = weighted_loss + stage_weight * gaussian_mmd_loss(source_stage, target_stage, sigmas=sigmas)
+        total_weight += stage_weight
+
+    if total_weight <= 0:
+        return source_features.new_zeros(())
+    return weighted_loss / total_weight

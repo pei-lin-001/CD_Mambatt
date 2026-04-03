@@ -150,6 +150,7 @@ class MambAttRegressor(nn.Module):
         transformer_inner_dropout: float = 0.0,
         mamba_block_mode: str = "bare",
         spd_gate_init_bias: float = -2.0,
+        spd_predictor_mode: str = "shared_head",
     ) -> None:
         super().__init__()
         if d_model % num_heads != 0:
@@ -158,6 +159,8 @@ class MambAttRegressor(nn.Module):
             raise ValueError("transformer_impl must be 'custom' or 'torch'")
         if mamba_block_mode not in {"bare", "prenorm_residual", "dd_spd"}:
             raise ValueError("mamba_block_mode must be 'bare', 'prenorm_residual', or 'dd_spd'")
+        if spd_predictor_mode not in {"shared_head", "decomposed_residual"}:
+            raise ValueError("spd_predictor_mode must be 'shared_head' or 'decomposed_residual'")
 
         self.input_proj = nn.Identity() if input_dim == d_model else nn.Linear(input_dim, d_model)
         if mamba_block_mode == "bare":
@@ -200,6 +203,7 @@ class MambAttRegressor(nn.Module):
         self.positional_encoding = PositionalEncoding(d_model=d_model)
         self.transformer_impl = transformer_impl
         self.mamba_block_mode = mamba_block_mode
+        self.spd_predictor_mode = spd_predictor_mode
         if transformer_impl == "custom":
             self.transformer_blocks = nn.ModuleList(
                 [
@@ -226,6 +230,27 @@ class MambAttRegressor(nn.Module):
             )
         self.output_dropout = nn.Dropout(dropout)
         self.head = nn.Linear(d_model, 1)
+        if self.mamba_block_mode == "dd_spd" and self.spd_predictor_mode == "decomposed_residual":
+            self.inv_head = nn.Linear(d_model, 1)
+            self.spec_head = nn.Linear(d_model, 1)
+            with torch.no_grad():
+                self.inv_head.weight.copy_(self.head.weight)
+                self.inv_head.bias.copy_(self.head.bias)
+                nn.init.zeros_(self.spec_head.weight)
+                nn.init.zeros_(self.spec_head.bias)
+        else:
+            self.inv_head = None
+            self.spec_head = None
+
+    def _decode_sequence(self, hidden: torch.Tensor) -> torch.Tensor:
+        hidden = hidden.transpose(0, 1)
+        hidden = self.positional_encoding(hidden)
+        if self.transformer_impl == "custom":
+            for block in self.transformer_blocks:
+                hidden = block(hidden)
+        else:
+            hidden = self.transformer_encoder(hidden)
+        return hidden[-1]
 
     def _encode_internal(self, x: torch.Tensor, *, return_aux: bool) -> torch.Tensor | dict[str, torch.Tensor]:
         if x.device.type != "cuda":
@@ -239,14 +264,7 @@ class MambAttRegressor(nn.Module):
             else:
                 hidden = block(hidden)
         pre_transformer_hidden = hidden
-        hidden = hidden.transpose(0, 1)
-        hidden = self.positional_encoding(hidden)
-        if self.transformer_impl == "custom":
-            for block in self.transformer_blocks:
-                hidden = block(hidden)
-        else:
-            hidden = self.transformer_encoder(hidden)
-        features = hidden[-1]
+        features = self._decode_sequence(pre_transformer_hidden)
         if not return_aux:
             return features
 
@@ -257,6 +275,9 @@ class MambAttRegressor(nn.Module):
             "pre_transformer_features": pre_transformer_hidden[:, -1, :],
         }
         if last_block_aux is not None:
+            invariant_features = self._decode_sequence(last_block_aux["inv_sequence"])
+            outputs["invariant_features"] = invariant_features
+            outputs["specific_features"] = features - invariant_features
             outputs["gate_sequence"] = last_block_aux["gate_sequence"]
             outputs["gate_mean"] = last_block_aux["gate_mean"]
         return outputs
@@ -277,6 +298,30 @@ class MambAttRegressor(nn.Module):
         prediction = self.head(self.output_dropout(features))
         return prediction.squeeze(-1)
 
+    def predict_from_output_dict(self, outputs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        features = outputs["features"]
+        if self.inv_head is None or self.spec_head is None:
+            prediction = self.predict_from_features(features)
+            return {
+                "prediction": prediction,
+                "prediction_inv": prediction,
+                "prediction_spec": prediction.new_zeros(prediction.shape),
+            }
+
+        invariant_features = outputs["invariant_features"]
+        specific_features = outputs["specific_features"]
+        prediction_inv = self.inv_head(self.output_dropout(invariant_features)).squeeze(-1)
+        prediction_spec = self.spec_head(self.output_dropout(specific_features)).squeeze(-1)
+        return {
+            "prediction": prediction_inv + prediction_spec,
+            "prediction_inv": prediction_inv,
+            "prediction_spec": prediction_spec,
+        }
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.inv_head is not None and self.spec_head is not None:
+            outputs = self.forward_features_with_aux(x)
+            predictions = self.predict_from_output_dict(outputs)
+            return predictions["prediction"]
         features = self.forward_features(x)
         return self.predict_from_features(features)
