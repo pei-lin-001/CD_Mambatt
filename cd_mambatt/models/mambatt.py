@@ -159,8 +159,10 @@ class MambAttRegressor(nn.Module):
             raise ValueError("transformer_impl must be 'custom' or 'torch'")
         if mamba_block_mode not in {"bare", "prenorm_residual", "dd_spd"}:
             raise ValueError("mamba_block_mode must be 'bare', 'prenorm_residual', or 'dd_spd'")
-        if spd_predictor_mode not in {"shared_head", "decomposed_residual"}:
-            raise ValueError("spd_predictor_mode must be 'shared_head' or 'decomposed_residual'")
+        if spd_predictor_mode not in {"shared_head", "decomposed_residual", "shared_aux_residual"}:
+            raise ValueError(
+                "spd_predictor_mode must be 'shared_head', 'decomposed_residual', or 'shared_aux_residual'"
+            )
 
         self.input_proj = nn.Identity() if input_dim == d_model else nn.Linear(input_dim, d_model)
         if mamba_block_mode == "bare":
@@ -230,7 +232,7 @@ class MambAttRegressor(nn.Module):
             )
         self.output_dropout = nn.Dropout(dropout)
         self.head = nn.Linear(d_model, 1)
-        if self.mamba_block_mode == "dd_spd" and self.spd_predictor_mode == "decomposed_residual":
+        if self.mamba_block_mode == "dd_spd" and self.spd_predictor_mode in {"decomposed_residual", "shared_aux_residual"}:
             self.inv_head = nn.Linear(d_model, 1)
             self.spec_head = nn.Linear(d_model, 1)
             with torch.no_grad():
@@ -300,22 +302,33 @@ class MambAttRegressor(nn.Module):
 
     def predict_from_output_dict(self, outputs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         features = outputs["features"]
+        prediction_shared = self.predict_from_features(features)
         if self.inv_head is None or self.spec_head is None:
-            prediction = self.predict_from_features(features)
             return {
-                "prediction": prediction,
-                "prediction_inv": prediction,
-                "prediction_spec": prediction.new_zeros(prediction.shape),
+                "prediction": prediction_shared,
+                "prediction_shared": prediction_shared,
+                "prediction_inv": prediction_shared,
+                "prediction_spec": prediction_shared.new_zeros(prediction_shared.shape),
+                "prediction_decomposed": prediction_shared,
             }
 
         invariant_features = outputs["invariant_features"]
         specific_features = outputs["specific_features"]
         prediction_inv = self.inv_head(self.output_dropout(invariant_features)).squeeze(-1)
         prediction_spec = self.spec_head(self.output_dropout(specific_features)).squeeze(-1)
+        prediction_decomposed = prediction_inv + prediction_spec
+        if self.spd_predictor_mode == "decomposed_residual":
+            prediction = prediction_decomposed
+        elif self.spd_predictor_mode == "shared_aux_residual":
+            prediction = prediction_shared
+        else:
+            prediction = prediction_shared
         return {
-            "prediction": prediction_inv + prediction_spec,
+            "prediction": prediction,
+            "prediction_shared": prediction_shared,
             "prediction_inv": prediction_inv,
             "prediction_spec": prediction_spec,
+            "prediction_decomposed": prediction_decomposed,
         }
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

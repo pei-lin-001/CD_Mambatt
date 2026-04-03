@@ -65,8 +65,10 @@ def model_forward_with_aux(model: nn.Module, windows: torch.Tensor) -> dict[str,
         "invariant_features": features,
         "specific_features": torch.zeros_like(features),
         "prediction": model.predict_from_features(features),
+        "prediction_shared": model.predict_from_features(features),
         "prediction_inv": model.predict_from_features(features),
         "prediction_spec": features.new_zeros((features.shape[0],)),
+        "prediction_decomposed": model.predict_from_features(features),
         "gate_mean": features.new_zeros(()),
     }
 
@@ -86,6 +88,14 @@ def inv_spec_orthogonality_loss(invariant_features: torch.Tensor, specific_featu
     specific_norm = F.normalize(specific_features, p=2, dim=1)
     cosine = (invariant_norm * specific_norm).sum(dim=1)
     return (cosine * cosine).mean()
+
+
+def residual_reconstruction_loss(outputs: dict[str, torch.Tensor]) -> torch.Tensor:
+    prediction_shared = outputs["prediction_shared"].detach()
+    prediction_inv = outputs["prediction_inv"].detach()
+    prediction_spec = outputs["prediction_spec"]
+    residual_target = prediction_shared - prediction_inv
+    return F.mse_loss(prediction_spec, residual_target)
 
 
 def resolve_grl_lambda(epoch: int, total_epochs: int, *, base_lambda: float, warmup_epochs: int) -> float:
@@ -154,6 +164,28 @@ def configure_adaptation_model_params(
     }
 
 
+def configure_semantic_warmup_params(model: nn.Module) -> tuple[list[nn.Parameter], dict[str, object]]:
+    named_params = list(model.named_parameters())
+    trainable: list[nn.Parameter] = []
+    trainable_names: list[str] = []
+    for name, param in named_params:
+        is_trainable = name.startswith("inv_head.") or name.startswith("spec_head.")
+        param.requires_grad_(is_trainable)
+        if is_trainable:
+            trainable.append(param)
+            trainable_names.append(name)
+    if not trainable:
+        raise ValueError("Semantic warmup requested, but the model does not expose inv/spec heads")
+    total_param_count = int(sum(param.numel() for _, param in named_params))
+    trainable_param_count = int(sum(param.numel() for param in trainable))
+    return trainable, {
+        "trainable_param_count": trainable_param_count,
+        "frozen_param_count": int(total_param_count - trainable_param_count),
+        "trainable_param_ratio": float(trainable_param_count) / float(total_param_count),
+        "trainable_param_names": trainable_names,
+    }
+
+
 def build_adaptation_optimizer(
     trainable_model_params: list[nn.Parameter],
     stage_head: nn.Module,
@@ -169,6 +201,87 @@ def build_adaptation_optimizer(
         lr=lr,
         weight_decay=weight_decay,
     )
+
+
+def run_semantic_warmup_epoch(
+    model: nn.Module,
+    source_loader: DataLoader,
+    optimizer: torch.optim.Optimizer | None,
+    device: torch.device,
+    *,
+    target_scale: float,
+    lambda_inv_aux: float,
+    lambda_spec_residual: float,
+    lambda_spec_reconstruction: float,
+    max_batches: int | None,
+) -> dict[str, float]:
+    if lambda_inv_aux <= 0 and lambda_spec_residual <= 0 and lambda_spec_reconstruction <= 0:
+        return {
+            "total_loss": 0.0,
+            "inv_aux_loss": 0.0,
+            "spec_residual_loss": 0.0,
+            "spec_reconstruction_loss": 0.0,
+        }
+
+    is_train = optimizer is not None
+    model.train(is_train)
+    mse_loss = nn.MSELoss()
+    total_examples = 0
+    total_loss_value = 0.0
+    total_inv_aux_loss = 0.0
+    total_spec_residual_loss = 0.0
+    total_spec_reconstruction_loss = 0.0
+
+    context = torch.enable_grad() if is_train else torch.no_grad()
+    with context:
+        for batch_idx, (windows, targets_raw) in enumerate(source_loader):
+            if max_batches is not None and batch_idx >= max_batches:
+                break
+            windows = windows.to(device, non_blocking=True)
+            targets = targets_raw.to(device, non_blocking=True) / target_scale
+            outputs = model_forward_with_aux(model, windows)
+
+            if lambda_inv_aux > 0:
+                inv_aux_loss = mse_loss(outputs["prediction_inv"], targets)
+            else:
+                inv_aux_loss = windows.new_zeros(())
+
+            if lambda_spec_residual > 0:
+                spec_residual_loss = outputs["prediction_spec"].pow(2).mean()
+            else:
+                spec_residual_loss = windows.new_zeros(())
+
+            if lambda_spec_reconstruction > 0:
+                spec_reconstruction_loss = residual_reconstruction_loss(outputs)
+            else:
+                spec_reconstruction_loss = windows.new_zeros(())
+
+            total_loss = (
+                lambda_inv_aux * inv_aux_loss
+                + lambda_spec_residual * spec_residual_loss
+                + lambda_spec_reconstruction * spec_reconstruction_loss
+            )
+
+            if is_train:
+                optimizer.zero_grad(set_to_none=True)
+                total_loss.backward()
+                optimizer.step()
+
+            batch_size = int(windows.shape[0])
+            total_examples += batch_size
+            total_loss_value += float(total_loss.detach().cpu()) * batch_size
+            total_inv_aux_loss += float(inv_aux_loss.detach().cpu()) * batch_size
+            total_spec_residual_loss += float(spec_residual_loss.detach().cpu()) * batch_size
+            total_spec_reconstruction_loss += float(spec_reconstruction_loss.detach().cpu()) * batch_size
+
+    if total_examples == 0:
+        raise ValueError("Semantic warmup processed zero source batches")
+    return {
+        "total_loss": total_loss_value / total_examples,
+        "inv_aux_loss": total_inv_aux_loss / total_examples,
+        "spec_residual_loss": total_spec_residual_loss / total_examples,
+        "spec_reconstruction_loss": total_spec_reconstruction_loss / total_examples,
+    }
 
 
 def get_domain_feature_dim(model: nn.Module, tap: str) -> int:
@@ -307,6 +420,8 @@ def run_cd_pseudo_epoch(
     lambda_conditional_inv_mmd: float,
     lambda_inv_spec_orth: float,
     lambda_spec_residual: float,
+    lambda_inv_aux: float,
+    lambda_spec_reconstruction: float,
     rul_clip: float,
     num_pseudo_stages: int,
     target_scale: float,
@@ -352,6 +467,8 @@ def run_cd_pseudo_epoch(
     total_conditional_inv_mmd_loss = 0.0
     total_inv_spec_orth_loss = 0.0
     total_spec_residual_loss = 0.0
+    total_inv_aux_loss = 0.0
+    total_spec_reconstruction_loss = 0.0
     total_combined_loss = 0.0
     total_pseudo_candidates = 0
     total_pseudo_accepted = 0
@@ -536,6 +653,23 @@ def run_cd_pseudo_epoch(
             else:
                 spec_residual_loss = source_features.new_zeros(())
 
+            if lambda_inv_aux > 0:
+                inv_aux_loss = (
+                    mse_loss(source_outputs["prediction_inv"], source_targets)
+                    + mse_loss(target_labeled_outputs["prediction_inv"], target_labeled_targets)
+                ) / 2.0
+            else:
+                inv_aux_loss = source_features.new_zeros(())
+
+            if lambda_spec_reconstruction > 0:
+                spec_reconstruction_loss = (
+                    residual_reconstruction_loss(source_outputs)
+                    + residual_reconstruction_loss(target_labeled_outputs)
+                    + residual_reconstruction_loss(target_unlabeled_outputs)
+                ) / 3.0
+            else:
+                spec_reconstruction_loss = source_features.new_zeros(())
+
             total_loss = (
                 source_loss_weight * source_loss
                 + target_loss_weight * target_loss
@@ -549,6 +683,8 @@ def run_cd_pseudo_epoch(
                 + lambda_conditional_inv_mmd * conditional_inv_mmd_loss
                 + lambda_inv_spec_orth * inv_spec_orth_loss
                 + lambda_spec_residual * spec_residual_loss
+                + lambda_inv_aux * inv_aux_loss
+                + lambda_spec_reconstruction * spec_reconstruction_loss
             )
 
             if is_train:
@@ -577,6 +713,8 @@ def run_cd_pseudo_epoch(
             total_conditional_inv_mmd_loss += float(conditional_inv_mmd_loss.detach().cpu()) * batch_examples
             total_inv_spec_orth_loss += float(inv_spec_orth_loss.detach().cpu()) * batch_examples
             total_spec_residual_loss += float(spec_residual_loss.detach().cpu()) * batch_examples
+            total_inv_aux_loss += float(inv_aux_loss.detach().cpu()) * batch_examples
+            total_spec_reconstruction_loss += float(spec_reconstruction_loss.detach().cpu()) * batch_examples
             total_combined_loss += float(total_loss.detach().cpu()) * batch_examples
             total_contrastive_valid_anchor_ratio += float(contrastive_stats["valid_anchor_ratio"]) * batch_examples
             total_contrastive_positive_count += float(contrastive_stats["mean_positive_count"]) * batch_examples
@@ -604,6 +742,8 @@ def run_cd_pseudo_epoch(
         "conditional_inv_mmd_loss": total_conditional_inv_mmd_loss / total_examples,
         "inv_spec_orth_loss": total_inv_spec_orth_loss / total_examples,
         "spec_residual_loss": total_spec_residual_loss / total_examples,
+        "inv_aux_loss": total_inv_aux_loss / total_examples,
+        "spec_reconstruction_loss": total_spec_reconstruction_loss / total_examples,
         "total_loss": total_combined_loss / total_examples,
         "pseudo_acceptance_ratio": pseudo_acceptance_ratio,
         "pseudo_mean_distance": mean_pseudo_distance,
@@ -740,6 +880,8 @@ def fit_cd_pseudo_stage(
             lambda_conditional_inv_mmd=float(args.lambda_conditional_inv_mmd),
             lambda_inv_spec_orth=float(args.lambda_inv_spec_orth),
             lambda_spec_residual=float(args.lambda_spec_residual),
+            lambda_inv_aux=float(args.lambda_inv_aux),
+            lambda_spec_reconstruction=float(args.lambda_spec_reconstruction),
             rul_clip=float(args.rul_clip),
             num_pseudo_stages=args.num_pseudo_stages,
             target_scale=target_scale,
@@ -772,6 +914,8 @@ def fit_cd_pseudo_stage(
             "train_conditional_inv_mmd_loss": train_stats["conditional_inv_mmd_loss"],
             "train_inv_spec_orth_loss": train_stats["inv_spec_orth_loss"],
             "train_spec_residual_loss": train_stats["spec_residual_loss"],
+            "train_inv_aux_loss": train_stats["inv_aux_loss"],
+            "train_spec_reconstruction_loss": train_stats["spec_reconstruction_loss"],
             "pseudo_acceptance_ratio": train_stats["pseudo_acceptance_ratio"],
             "pseudo_mean_distance": train_stats["pseudo_mean_distance"],
             "pseudo_stage_quantile": stage_quantile,
@@ -799,6 +943,8 @@ def fit_cd_pseudo_stage(
             "lambda_conditional_inv_mmd": args.lambda_conditional_inv_mmd,
             "lambda_inv_spec_orth": args.lambda_inv_spec_orth,
             "lambda_spec_residual": args.lambda_spec_residual,
+            "lambda_inv_aux": args.lambda_inv_aux,
+            "lambda_spec_reconstruction": args.lambda_spec_reconstruction,
         }
         history.append(record)
         print(json.dumps(record, ensure_ascii=False))
@@ -859,7 +1005,7 @@ def train_one_seed(
     target_scale = float(args.target_scale)
     grad_clip_norm = None if args.grad_clip_norm <= 0 else float(args.grad_clip_norm)
     source_model_args = args
-    if str(args.mamba_block_mode) == "dd_spd" and str(args.spd_predictor_mode) == "decomposed_residual":
+    if str(args.mamba_block_mode) == "dd_spd" and str(args.spd_predictor_mode) in {"decomposed_residual", "shared_aux_residual"}:
         source_model_args = argparse.Namespace(**vars(args))
         source_model_args.spd_predictor_mode = "shared_head"
 
@@ -886,7 +1032,9 @@ def train_one_seed(
 
     cd_model = build_model(args, int(source_meta["train_windows_shape"][2])).to(device)
     source_checkpoint = torch.load(source_stage["checkpoint"], map_location=device)
-    if str(args.spd_predictor_mode) == "decomposed_residual":
+    semantic_warmup_history: list[dict[str, object]] = []
+    semantic_warmup_info: dict[str, object] | None = None
+    if str(args.spd_predictor_mode) in {"decomposed_residual", "shared_aux_residual"}:
         cd_model.load_state_dict(source_checkpoint["model_state_dict"], strict=False)
         if getattr(cd_model, "inv_head", None) is not None and "head.weight" in source_checkpoint["model_state_dict"]:
             with torch.no_grad():
@@ -896,6 +1044,48 @@ def train_one_seed(
                 nn.init.zeros_(cd_model.spec_head.bias)
     else:
         cd_model.load_state_dict(source_checkpoint["model_state_dict"])
+
+    if str(args.spd_predictor_mode) == "shared_aux_residual" and int(args.semantic_warmup_epochs) > 0:
+        semantic_warmup_params, semantic_warmup_freeze_info = configure_semantic_warmup_params(cd_model)
+        semantic_warmup_optimizer = torch.optim.Adam(
+            semantic_warmup_params,
+            lr=float(args.semantic_warmup_lr),
+            weight_decay=float(args.target_weight_decay),
+        )
+        semantic_warmup_dir = run_dir / "semantic_warmup"
+        semantic_warmup_dir.mkdir(parents=True, exist_ok=True)
+        for epoch in range(1, int(args.semantic_warmup_epochs) + 1):
+            warmup_stats = run_semantic_warmup_epoch(
+                cd_model,
+                source_loaders["train"],
+                semantic_warmup_optimizer,
+                device,
+                target_scale=target_scale,
+                lambda_inv_aux=float(args.lambda_inv_aux),
+                lambda_spec_residual=float(args.lambda_spec_residual),
+                lambda_spec_reconstruction=float(args.lambda_spec_reconstruction),
+                max_batches=args.max_source_train_batches,
+            )
+            record = {
+                "stage": "semantic_warmup",
+                "seed": seed,
+                "epoch": epoch,
+                "train_total_loss": warmup_stats["total_loss"],
+                "train_inv_aux_loss": warmup_stats["inv_aux_loss"],
+                "train_spec_residual_loss": warmup_stats["spec_residual_loss"],
+                "train_spec_reconstruction_loss": warmup_stats["spec_reconstruction_loss"],
+            }
+            semantic_warmup_history.append(record)
+            print(json.dumps(record, ensure_ascii=False))
+        semantic_warmup_info = {
+            **semantic_warmup_freeze_info,
+            "epochs": int(args.semantic_warmup_epochs),
+            "lr": float(args.semantic_warmup_lr),
+            "history_path": str(semantic_warmup_dir / "history.json"),
+        }
+        with (semantic_warmup_dir / "history.json").open("w", encoding="utf-8") as handle:
+            json.dump(semantic_warmup_history, handle, indent=2, ensure_ascii=False)
+
     cd_stage = fit_cd_pseudo_stage(
         args,
         seed,
@@ -941,6 +1131,19 @@ def train_one_seed(
             "test_windows_shape": target_direct_meta["test_windows_shape"],
             "test_unit_count": int(target_direct_meta["test_unit_count"]),
         },
+        "semantic_warmup": None
+        if semantic_warmup_info is None
+        else {
+            "epochs": int(semantic_warmup_info["epochs"]),
+            "lr": float(semantic_warmup_info["lr"]),
+            "trainable_param_count": int(semantic_warmup_info["trainable_param_count"]),
+            "frozen_param_count": int(semantic_warmup_info["frozen_param_count"]),
+            "trainable_param_ratio": float(semantic_warmup_info["trainable_param_ratio"]),
+            "history_path": str(semantic_warmup_info["history_path"]),
+            "last_train_inv_aux_loss": float(semantic_warmup_history[-1]["train_inv_aux_loss"]) if semantic_warmup_history else 0.0,
+            "last_train_spec_residual_loss": float(semantic_warmup_history[-1]["train_spec_residual_loss"]) if semantic_warmup_history else 0.0,
+            "last_train_spec_reconstruction_loss": float(semantic_warmup_history[-1]["train_spec_reconstruction_loss"]) if semantic_warmup_history else 0.0,
+        },
         "cd_stage": {
             "best_epoch": int(cd_stage["best_epoch"]),
             "best_val_rmse": float(cd_stage["best_val_rmse"]),
@@ -955,7 +1158,11 @@ def train_one_seed(
             "lambda_conditional_inv_mmd": float(args.lambda_conditional_inv_mmd),
             "lambda_inv_spec_orth": float(args.lambda_inv_spec_orth),
             "lambda_spec_residual": float(args.lambda_spec_residual),
+            "lambda_inv_aux": float(args.lambda_inv_aux),
+            "lambda_spec_reconstruction": float(args.lambda_spec_reconstruction),
             "inv_alignment_mode": str(args.inv_alignment_mode),
+            "semantic_warmup_epochs": int(args.semantic_warmup_epochs),
+            "semantic_warmup_lr": float(args.semantic_warmup_lr),
             "adaptation_freeze_mode": str(args.adaptation_freeze_mode),
             "adaptation_freeze_epochs": int(getattr(args, "adaptation_freeze_epochs", 0)),
             "stage_feature_mode": str(args.stage_feature_mode),
@@ -995,6 +1202,8 @@ def train_one_seed(
             "best_conditional_inv_mmd_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_conditional_inv_mmd_loss", 0.0)),
             "best_inv_spec_orth_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_inv_spec_orth_loss", 0.0)),
             "best_spec_residual_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_spec_residual_loss", 0.0)),
+            "best_inv_aux_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_inv_aux_loss", 0.0)),
+            "best_spec_reconstruction_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_spec_reconstruction_loss", 0.0)),
             "best_active_adaptation_freeze_mode": None if cd_stage["best_record"] is None else str(cd_stage["best_record"].get("active_adaptation_freeze_mode", "")),
             "uses_domain_adv": bool(cd_stage["uses_domain_adv"]),
             "uses_inv_mmd_alignment": bool(str(args.inv_alignment_mode) == "mmd" and resolve_inv_mmd_lambda(args) > 0),
@@ -1033,7 +1242,11 @@ def summarize_results(run_results: list[dict[str, object]], args: argparse.Names
         "lambda_conditional_inv_mmd": float(args.lambda_conditional_inv_mmd),
         "lambda_inv_spec_orth": float(args.lambda_inv_spec_orth),
         "lambda_spec_residual": float(args.lambda_spec_residual),
+        "lambda_inv_aux": float(args.lambda_inv_aux),
+        "lambda_spec_reconstruction": float(args.lambda_spec_reconstruction),
         "inv_alignment_mode": str(args.inv_alignment_mode),
+        "semantic_warmup_epochs": int(args.semantic_warmup_epochs),
+        "semantic_warmup_lr": float(args.semantic_warmup_lr),
         "adaptation_freeze_mode": str(args.adaptation_freeze_mode),
         "adaptation_freeze_epochs": int(getattr(args, "adaptation_freeze_epochs", 0)),
         "stage_feature_mode": str(args.stage_feature_mode),
@@ -1109,6 +1322,10 @@ def main() -> None:
     parser.add_argument("--lambda-conditional-inv-mmd", type=float, default=0.0, help="Weight for stage-conditional MMD on the invariant branch")
     parser.add_argument("--lambda-inv-spec-orth", type=float, default=0.0, help="Weight for invariant/specific feature orthogonality regularization")
     parser.add_argument("--lambda-spec-residual", type=float, default=0.0, help="Weight for residual-size regularization on the specific prediction branch")
+    parser.add_argument("--lambda-inv-aux", type=float, default=0.0, help="Weight for supervised invariant-branch RUL prediction")
+    parser.add_argument("--lambda-spec-reconstruction", type=float, default=0.0, help="Weight for residual reconstruction of the shared prediction by the specific branch")
+    parser.add_argument("--semantic-warmup-epochs", type=int, default=0, help="Optional source-only semantic warmup epochs for inv/spec heads before cross-domain adaptation")
+    parser.add_argument("--semantic-warmup-lr", type=float, default=5e-4, help="Learning rate used during semantic warmup")
     parser.add_argument(
         "--adaptation-freeze-mode",
         choices=("none", "head_only", "spec_gate_only", "spec_gate_head", "spec_gate_transformer_head"),
@@ -1150,7 +1367,7 @@ def main() -> None:
     parser.add_argument("--transformer-inner-dropout", type=float, default=0.0, help="Dropout applied inside Transformer residual branches")
     parser.add_argument("--mamba-block-mode", choices=("bare", "prenorm_residual", "dd_spd"), default="dd_spd", help="Mamba block mode used in v3; dd_spd is the intended SPD setting")
     parser.add_argument("--spd-gate-init-bias", type=float, default=-2.0, help="Initial bias for the SPD specific-path gate")
-    parser.add_argument("--spd-predictor-mode", choices=("shared_head", "decomposed_residual"), default="shared_head", help="Prediction head mode for SPD: original shared head or invariant-main plus specific-residual decomposition")
+    parser.add_argument("--spd-predictor-mode", choices=("shared_head", "decomposed_residual", "shared_aux_residual"), default="shared_head", help="Prediction head mode for SPD: original shared head, hard decomposed residual predictor, or shared-head-anchored auxiliary decomposition")
     parser.add_argument("--source-val-all-windows", action="store_true", help="Validate source stage on all source validation windows")
     parser.add_argument("--target-val-all-windows", action="store_true", help="Validate target adaptation stage on all target validation windows")
     parser.add_argument("--device", default="auto", help="auto, cuda, or cpu")

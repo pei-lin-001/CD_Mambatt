@@ -17,10 +17,11 @@ Current status in one paragraph:
 > **matched-shot in-house comparison with remaining protocol mismatches**, not as a
 > fully strict apples-to-apples benchmark. The architecture-level `DD-SSM / SPD`
 > branch is now implemented and runnable on CUDA. The latest finding is that
-> **the first novelty-driven semantic-SPD redesign is conceptually stronger but
-> empirically underperforms the earlier SPD v0 invariant-MMD reference**, so the
-> next step should be a softer semantic decomposition rather than another blind
-> scalar sweep.
+> **the first hard semantic-SPD redesign underperformed, but the newer
+> shared-head-anchored semantic variant with source semantic warmup is now
+> showing the first real positive signal**, even though it still has not
+> surpassed the older SPD v0 invariant-MMD reference on the current limited
+> checks.
 
 ## 2. What is already completed
 
@@ -200,6 +201,38 @@ Interpretation:
 - therefore, the next semantic-SPD iteration should keep the novelty direction
   but adopt a **softer decomposition protocol**
 
+### 3.6 Shared-aux semantic-SPD + source semantic warmup
+
+New code state:
+
+- `spd_predictor_mode = shared_aux_residual`
+- final prediction remains on the stable shared head
+- invariant and specific heads are trained as semantic auxiliary branches
+- a new `semantic_warmup` stage calibrates `inv_head/spec_head` on source data
+  before cross-domain adaptation
+
+Current key pilot results:
+
+- shared-aux semantic-SPD without warmup (`2` seeds):
+  - mean adapted RMSE = **24.5367**
+- seed `43` with shared-aux + warmup:
+  - **27.0563 -> 25.7429**
+- seed `42` with shared-aux + warmup:
+  - **22.0172 -> 21.9192**
+- seed `43` with warmup + invariant MMD:
+  - **25.7429 -> 25.7050**
+
+Interpretation:
+
+- source semantic warmup is the **first semantic-SPD modification that clearly
+  improves the softer semantic branch**
+- the main gain seems to come from **semantic grounding of the invariant
+  branch**, not from simply increasing alignment pressure
+- the warmup-only paired single-seed estimate is approximately:
+  - **23.8310**
+- that is still slightly weaker than the earlier SPD v0 invariant-MMD
+  reference (**23.3498**), but it closes much of the gap
+
 ## 4. What we can and cannot claim right now
 
 ### Can claim
@@ -223,21 +256,25 @@ Interpretation:
 2. current `CD-MambAtt v2` innovation depth is still insufficient for a strong paper
 3. the original GRL-based SPD branch is unstable across seeds
 4. after replacing GRL with MMD, SPD is more stable but still not clearly better than v2
-5. the first semantic-SPD redesign proves the novelty direction is implementable,
-   but its predictor decomposition is too aggressive and hurts performance
-6. simple loss-weight tuning around the current SPD scaffold shows diminishing returns
-7. simple selective-freezing / warm-start freeze schedules do not yet produce a net gain
-8. `FOMLN` comparison is useful but still not perfectly fair
-9. `MetaDFKN` remains a reported threat, but protocol ambiguity is not yet cleaned enough for fair reproduction
+5. the first hard semantic-SPD redesign proved the novelty direction is
+   implementable, but its predictor decomposition was too aggressive
+6. the softer shared-aux semantic-SPD is better, yet still not consistently
+   stronger than the older SPD v0 reference
+7. current evidence suggests the main missing piece is deeper **source semantic
+   grounding** of the invariant/specific decomposition
+8. simple loss-weight tuning around the current SPD scaffold shows diminishing returns
+9. simple selective-freezing / warm-start freeze schedules do not yet produce a net gain
+10. `FOMLN` comparison is useful but still not perfectly fair
+11. `MetaDFKN` remains a reported threat, but protocol ambiguity is not yet cleaned enough for fair reproduction
 
 ## 6. Next priority
 
 Current recommended priority order:
 
-1. **revise semantic-SPD into a softer decomposition**:
-   keep the novelty claim inside Mamba, but reduce disruption by preserving the
-   stable shared prediction route and adding semantic auxiliary constraints or a
-   bounded residual path instead of a hard predictor replacement
+1. **extend source semantic grounding in the softer semantic-SPD branch**:
+   the next targeted try should move beyond heads-only semantic warmup toward a
+   slightly larger SPD-specific warmup set, so the internal decomposition is
+   semantically calibrated before target adaptation starts
 2. after SPD is stable, add **SSDA** if needed
 3. treat **DAAD** as an auxiliary enhancement, not a co-equal main innovation
 4. baseline track, if resumed, should target a cleaner `MetaDFKN` protocol audit before coding

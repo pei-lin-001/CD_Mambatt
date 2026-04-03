@@ -2094,3 +2094,134 @@ formal protocol.
     - use the invariant branch as an auxiliary main trend estimator rather than
       fully replacing the primary prediction route on day one
     - delay or weaken residual-branch freedom in early adaptation
+
+### 11.25 Semantic-SPD soft revision v1: shared-head-anchored auxiliary decomposition
+
+- date: 2026-04-03
+- code update:
+  - `cd_mambatt/models/mambatt.py`
+    - added `spd_predictor_mode = shared_aux_residual`
+    - keep final prediction on the stable shared head
+    - still expose:
+      - `prediction_shared`
+      - `prediction_inv`
+      - `prediction_spec`
+      - `prediction_decomposed`
+  - `train_cd_mambatt_v3.py`
+    - added:
+      - `lambda_inv_aux`
+      - `lambda_spec_reconstruction`
+    - new logic:
+      - invariant head is supervised directly on labeled source/target batches
+      - specific head is trained to reconstruct the residual between
+        `prediction_shared` and `prediction_inv`
+- main pilot output:
+  - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_fd001_to_fd003_2seeds_semanticspd_sharedaux_condinvmmd01_invaux05_specrecon01/FD001_TO_FD003/summary.json`
+- protocol:
+  - `FD001 -> FD003`
+  - seeds = `42, 43`
+  - `spd_predictor_mode = shared_aux_residual`
+  - `stage_feature_mode = invariant`
+  - `lambda_conditional_inv_mmd = 0.1`
+  - `lambda_inv_spec_orth = 0.01`
+  - `lambda_spec_residual = 1e-4`
+  - `lambda_inv_aux = 0.5`
+  - `lambda_spec_reconstruction = 0.1`
+  - `inv_alignment_mode = none`
+- summary:
+  - mean direct RMSE = **42.4529 ± 0.8802**
+  - mean adapted RMSE = **24.5367 ± 2.5195**
+  - seed `42`: **22.0172**
+  - seed `43`: **27.0563**
+- interpretation:
+  - this soft revision successfully avoids the large collapse of the earlier
+    hard decomposed predictor
+  - but it is still **not enough** to beat:
+    - SPD v0 invariant-MMD reference: **23.3498**
+  - the remaining issue is no longer “hard predictor replacement” only
+  - the invariant branch likely still lacks sufficient source-domain semantic
+    grounding before cross-domain adaptation begins
+
+### 11.26 Coarse invariant MMD probe on top of shared-aux decomposition
+
+- date: 2026-04-03
+- output:
+  - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_fd001_to_fd003_seed43_semanticspd_sharedaux_invmmd01_condinvmmd01_invaux05_specrecon01/FD001_TO_FD003/summary.json`
+- protocol:
+  - seed = `43`
+  - same as Section 11.25, except:
+    - `inv_alignment_mode = mmd`
+    - `lambda_inv_mmd = 0.1`
+- result:
+  - adapted RMSE = **26.7540**
+- interpretation:
+  - adding coarse invariant MMD **before** solving the semantic-initialization
+    problem does not materially rescue the bad seed
+  - therefore, the next bottleneck is more likely the invariant branch
+    initialization / semantic grounding itself, not just the alignment strength
+
+### 11.27 Semantic warmup code update: source-only calibration for inv/spec heads
+
+- date: 2026-04-03
+- code update:
+  - `train_cd_mambatt_v3.py` now supports:
+    - `--semantic-warmup-epochs`
+    - `--semantic-warmup-lr`
+  - warmup behavior:
+    - after loading the stable source checkpoint into the shared-aux model
+    - freeze the full model except:
+      - `inv_head`
+      - `spec_head`
+    - run a short source-only warmup using:
+      - invariant supervised loss
+      - specific residual reconstruction
+      - specific residual size regularization
+- motivation:
+  - current soft semantic-SPD still copies `head -> inv_head` without ever
+    calibrating that head on the invariant feature branch
+  - the warmup is intended to give the invariant branch **source semantic
+    meaning before target adaptation**
+
+### 11.28 Semantic warmup results: first semantic-SPD improvement that actually helps
+
+- date: 2026-04-03
+- warmup-only seed `43`:
+  - output:
+    - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_fd001_to_fd003_seed43_semanticspd_sharedaux_warmup5_condinvmmd01_invaux05_specrecon01/FD001_TO_FD003/summary.json`
+  - result:
+    - adapted RMSE = **25.7429**
+  - compared with Section 11.25 seed `43`:
+    - **27.0563 -> 25.7429**
+    - gain = **1.3134**
+- warmup + invariant MMD seed `43`:
+  - output:
+    - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_fd001_to_fd003_seed43_semanticspd_sharedaux_warmup5_invmmd01_condinvmmd01_invaux05_specrecon01/FD001_TO_FD003/summary.json`
+  - result:
+    - adapted RMSE = **25.7050**
+  - compared with warmup-only:
+    - **25.7429 -> 25.7050**
+    - gain = **0.0379**
+- warmup-only seed `42`:
+  - output:
+    - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_fd001_to_fd003_seed42_semanticspd_sharedaux_warmup5_condinvmmd01_invaux05_specrecon01/FD001_TO_FD003/summary.json`
+  - result:
+    - adapted RMSE = **21.9192**
+  - compared with Section 11.25 seed `42`:
+    - **22.0172 -> 21.9192**
+    - gain = **0.0980**
+- current interpretation:
+  - **semantic warmup is the first semantic-SPD modification that produces a
+    clear positive signal without breaking the stable shared prediction path**
+  - the main improvement comes from source semantic grounding, not from adding
+    more invariant MMD
+  - coarse invariant MMD after warmup adds only a very small extra gain on the
+    tested bad seed
+  - a paired 2-seed estimate from the warmup-only single-seed results is:
+    - `(21.9192 + 25.7429) / 2 = 23.8310`
+  - this is still slightly above the older SPD v0 invariant-MMD reference
+    (**23.3498**), but it is much closer than the first shared-aux pilot
+    (**24.5367**)
+  - current best judgment:
+    - the right next direction is **not** another random scalar sweep
+    - it is to push source semantic grounding further, likely by extending the
+      warmup from heads-only toward a slightly larger SPD-specific parameter set
