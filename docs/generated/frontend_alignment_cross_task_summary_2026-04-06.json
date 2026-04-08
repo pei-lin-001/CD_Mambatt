@@ -1,0 +1,201 @@
+{
+  "date": "2026-04-06",
+  "focus": "Cross-task validation of frontend_mean invariant-alignment tap using current SPD source checkpoints.",
+  "experiments": [
+    {
+      "task": "FD001_TO_FD003",
+      "exp_frontend_mean_full": {
+        "runs": [
+          {
+            "seed": 42,
+            "test_rmse": 21.38963221612891,
+            "best_val_rmse": 11.832872615036308,
+            "best_epoch": 2,
+            "gate_mean": 0.18599480670534782,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_frontend_mean_full/FD001_TO_FD003/seed_42/result.json"
+          },
+          {
+            "seed": 43,
+            "test_rmse": 19.487604424190177,
+            "best_val_rmse": 19.531751577632207,
+            "best_epoch": 1,
+            "gate_mean": 0.1478596836030762,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_frontend_mean_full/FD001_TO_FD003/seed_43/result.json"
+          },
+          {
+            "seed": 44,
+            "test_rmse": 20.28727007663755,
+            "best_val_rmse": 21.936579021063267,
+            "best_epoch": 2,
+            "gate_mean": 0.14867746731967002,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_frontend_mean_full/FD001_TO_FD003/seed_44/result.json"
+          }
+        ],
+        "mean_test_rmse": 20.38816890565221,
+        "std_test_rmse": 0.7797704194608519
+      },
+      "old_reference": {
+        "run_root": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_spd_fullmatch/FD001_TO_FD003",
+        "mean_test_rmse": 21.085932320990604,
+        "std_test_rmse": 0.9813910522577237,
+        "seeds_42_44": [
+          22.397550681340963,
+          20.037140248349147,
+          20.82310603328171
+        ]
+      },
+      "comparison_baseline": "old_reference",
+      "frontend_delta_vs_baseline": -0.6977634153383931
+    },
+    {
+      "task": "FD003_TO_FD001",
+      "exp_inv_mean_full": {
+        "runs": [
+          {
+            "seed": 42,
+            "test_rmse": 19.613142073995316,
+            "best_val_rmse": 24.67723465721273,
+            "best_epoch": 1,
+            "gate_mean": 0.13983281490102942,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_inv_mean_full/FD003_TO_FD001/seed_42/result.json"
+          },
+          {
+            "seed": 43,
+            "test_rmse": 18.860559864863138,
+            "best_val_rmse": 20.211847673557422,
+            "best_epoch": 1,
+            "gate_mean": 0.1327362198888078,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_inv_mean_full/FD003_TO_FD001/seed_43/result.json"
+          },
+          {
+            "seed": 44,
+            "test_rmse": 21.257360116283966,
+            "best_val_rmse": 22.47097710411355,
+            "best_epoch": 1,
+            "gate_mean": 0.12153184279553847,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_inv_mean_full/FD003_TO_FD001/seed_44/result.json"
+          }
+        ],
+        "mean_test_rmse": 19.910354018380804,
+        "std_test_rmse": 1.000804365237212
+      },
+      "exp_frontend_mean_full": {
+        "runs": [
+          {
+            "seed": 42,
+            "test_rmse": 19.614111798907565,
+            "best_val_rmse": 24.678887862264325,
+            "best_epoch": 1,
+            "gate_mean": 0.1398323464977235,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_frontend_mean_full/FD003_TO_FD001/seed_42/result.json"
+          },
+          {
+            "seed": 43,
+            "test_rmse": 18.87067506385244,
+            "best_val_rmse": 20.225307178382288,
+            "best_epoch": 1,
+            "gate_mean": 0.13273971813362168,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_frontend_mean_full/FD003_TO_FD001/seed_43/result.json"
+          },
+          {
+            "seed": 44,
+            "test_rmse": 21.258352912009165,
+            "best_val_rmse": 22.472020087045177,
+            "best_epoch": 1,
+            "gate_mean": 0.12153607741894518,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_frontend_mean_full/FD003_TO_FD001/seed_44/result.json"
+          }
+        ],
+        "mean_test_rmse": 19.914379924923058,
+        "std_test_rmse": 0.9976211997447482
+      },
+      "old_reference": {
+        "run_root": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_bestcfg_fd003_to_fd001_5seeds/FD003_TO_FD001",
+        "mean_test_rmse": 20.38059812703228,
+        "std_test_rmse": 1.3164356268073338,
+        "seeds_42_44": [
+          19.115344247667398,
+          19.830493649673844,
+          22.195956483755594
+        ]
+      },
+      "comparison_baseline": "exp_inv_mean_full",
+      "frontend_delta_vs_baseline": 0.00402590654225321
+    },
+    {
+      "task": "FD001_TO_FD004",
+      "exp_inv_mean_full": {
+        "runs": [
+          {
+            "seed": 42,
+            "test_rmse": 22.710267008870424,
+            "best_val_rmse": 18.001952855281832,
+            "best_epoch": 1,
+            "gate_mean": 0.17136826126557606,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_inv_mean_full/FD001_TO_FD004/seed_42/result.json"
+          },
+          {
+            "seed": 43,
+            "test_rmse": 27.139575231623727,
+            "best_val_rmse": 25.99304926363113,
+            "best_epoch": 20,
+            "gate_mean": 0.2505453774374389,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_inv_mean_full/FD001_TO_FD004/seed_43/result.json"
+          },
+          {
+            "seed": 44,
+            "test_rmse": 20.88214908471262,
+            "best_val_rmse": 19.175204522859186,
+            "best_epoch": 12,
+            "gate_mean": 0.17674810464074858,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_inv_mean_full/FD001_TO_FD004/seed_44/result.json"
+          }
+        ],
+        "mean_test_rmse": 23.577330441735594,
+        "std_test_rmse": 2.6271270421597612
+      },
+      "exp_frontend_mean_full": {
+        "runs": [
+          {
+            "seed": 42,
+            "test_rmse": 22.706515174928207,
+            "best_val_rmse": 18.001783729492818,
+            "best_epoch": 1,
+            "gate_mean": 0.17132426387239977,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_frontend_mean_full/FD001_TO_FD004/seed_42/result.json"
+          },
+          {
+            "seed": 43,
+            "test_rmse": 27.112323177329824,
+            "best_val_rmse": 26.04943877074461,
+            "best_epoch": 20,
+            "gate_mean": 0.25032728811826876,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_frontend_mean_full/FD001_TO_FD004/seed_43/result.json"
+          },
+          {
+            "seed": 44,
+            "test_rmse": 21.066653009102623,
+            "best_val_rmse": 19.080381357989147,
+            "best_epoch": 11,
+            "gate_mean": 0.16993991346900658,
+            "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/exp_frontend_mean_full/FD001_TO_FD004/seed_44/result.json"
+          }
+        ],
+        "mean_test_rmse": 23.62849712045355,
+        "std_test_rmse": 2.5527854037833655
+      },
+      "old_reference": {
+        "run_root": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_bestcfg_fd001_to_fd004_5seeds_fixcond/FD001_TO_FD004",
+        "mean_test_rmse": 23.937171245793127,
+        "std_test_rmse": 2.8137817323148533,
+        "seeds_42_44": [
+          22.700652498859025,
+          27.83099431075262,
+          21.27986692776775
+        ]
+      },
+      "comparison_baseline": "exp_inv_mean_full",
+      "frontend_delta_vs_baseline": 0.051166678717954994
+    }
+  ]
+}

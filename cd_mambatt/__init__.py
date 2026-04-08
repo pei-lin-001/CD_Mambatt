@@ -18,7 +18,7 @@ from cd_mambatt.data import (
 from cd_mambatt.losses import gaussian_mmd_loss
 from cd_mambatt.metrics import mae, nasa_score, rmse
 from cd_mambatt.models.dd_mamba import DDMambaBlock
-from cd_mambatt.models.mambatt import MambAttRegressor
+from cd_mambatt.models.mambatt import DualPathMambAttRegressor, MambAttRegressor
 
 __all__ = [
     "CMAPSSSplit",
@@ -28,6 +28,7 @@ __all__ = [
     "FEATURE_NAMES",
     "FewShotTargetPartition",
     "DDMambaBlock",
+    "DualPathMambAttRegressor",
     "SENSOR_NAMES",
     "MambAttRegressor",
     "build_few_shot_target_partition",

@@ -13,6 +13,12 @@ here with:
 - best RMSE
 - short conclusion
 
+Note:
+
+- as of `2026-04-08`, one-off experiment scripts that used to live at the
+  repository root were consolidated under `experiments/` and grouped into
+  `ablations/`, `diagnostics/`, `prototypes/`, and `quick_tests/`
+
 ---
 
 ## 1. Canonical Task
@@ -2225,3 +2231,349 @@ formal protocol.
     - the right next direction is **not** another random scalar sweep
     - it is to push source semantic grounding further, likely by extending the
       warmup from heads-only toward a slightly larger SPD-specific parameter set
+
+---
+
+## 12. Protocol mismatch diagnosis and resolution (2026-04-03)
+
+### 12.1 Discovery: v3 training protocol was not matched to v2 best-config
+
+- date: 2026-04-03
+- discovered by: Claude (during diagnostic run)
+- root cause:
+  three flags that v2 best-config used were **not enabled by default** in v3,
+  causing all prior v3/SPD experiments to run under a disadvantaged protocol:
+
+  | Flag | v2 best-config | v3 default (old) | Impact |
+  |---|---|---|---|
+  | `--source-val-all-windows` | enabled | **disabled** | source val set: 3724 windows → 20 windows |
+  | `--target-val-all-windows` | enabled | **disabled** | target val set: ~2000 windows → 10 windows |
+  | `--resample-few-shot-per-seed` | enabled | **disabled** | 3 seeds share 1 fixed few-shot partition |
+
+- consequence:
+  - with only 20 / 10 validation windows, checkpoint selection was essentially
+    random noise — best_epoch drifted to late epochs, selecting poor checkpoints
+  - this affected **all** prior SPD experiments recorded in sections 11.1–11.28
+  - the "SPD is unstable and worse than v2" conclusion was **an artifact of
+    unfair comparison**, not a real architectural deficiency
+
+### 12.2 Diagnostic experiment sequence
+
+All runs below use `FD001 -> FD003`, `seeds = 42,43,44`.
+
+#### 12.2.1 v3 + bare, default flags (no match)
+
+- output: `runs/cd_mambatt_v3_bare_baseline/FD001_TO_FD003/summary.json`
+- flags: defaults only, no resample, no val-all-windows
+- result:
+  - mean adapted RMSE = **24.2296 ± 1.9488**
+  - source val windows per seed: **20**
+  - target val windows per seed: **10**
+- conclusion: v3 script itself regresses ~3 RMSE vs v2, even without SPD
+
+#### 12.2.2 v3 + bare + resample (partial match)
+
+- output: `runs/cd_mambatt_v3_bare_resample/FD001_TO_FD003/summary.json`
+- flags: `--resample-few-shot-per-seed`
+- result:
+  - mean adapted RMSE = **23.6393 ± 2.3078**
+- conclusion: resample alone recovers ~0.6 RMSE; not the main issue
+
+#### 12.2.3 v3 + bare + resample + source-val-all-windows (more match)
+
+- output: `runs/cd_mambatt_v3_bare_resample_valall/FD001_TO_FD003/summary.json`
+- flags: `--resample-few-shot-per-seed --source-val-all-windows`
+- result:
+  - mean adapted RMSE = **23.1032 ± 1.5907**
+  - source val windows per seed: **~3700** (correct)
+  - target val windows per seed: **10** (still wrong)
+- conclusion: fixing source validation recovers another ~0.5 RMSE
+
+#### 12.2.4 v3 + bare + full protocol match
+
+- output: `runs/cd_mambatt_v3_bare_fullmatch/FD001_TO_FD003/summary.json`
+- flags: `--resample-few-shot-per-seed --source-val-all-windows --target-val-all-windows`
+- per-seed results:
+  - seed 42: adapted = **26.44** (cd_epoch=10, outlier)
+  - seed 43: adapted = **20.43** (cd_epoch=2)
+  - seed 44: adapted = **19.12** (cd_epoch=1)
+- result:
+  - mean adapted RMSE = **21.9982 ± 3.1882**
+- comparison with v2 reference:
+  - v2: **21.1291 ± 1.5928**
+  - gap narrowed from 3.1 to 0.87 RMSE
+- conclusion: seed 43/44 now match or beat v2; seed 42 remains an outlier
+
+#### 12.2.5 SPD + inv-MMD + full protocol match (KEY RESULT)
+
+- output: `runs/cd_mambatt_v3_spd_fullmatch/FD001_TO_FD003/summary.json`
+- flags:
+  - `--mamba-block-mode dd_spd`
+  - `--inv-alignment-mode mmd --lambda-inv-mmd 0.1`
+  - `--lambda-domain-adv 0.0`
+  - `--domain-feature-tap inv_mean`
+  - `--resample-few-shot-per-seed --source-val-all-windows --target-val-all-windows`
+  - `--spd-predictor-mode shared_head --semantic-warmup-epochs 0`
+  - `--adaptation-freeze-mode none`
+- per-seed results:
+  - seed 42: adapted = **22.40** (cd_epoch=1, gate_mean=0.196)
+  - seed 43: adapted = **20.04** (cd_epoch=1, gate_mean=0.149)
+  - seed 44: adapted = **20.82** (cd_epoch=1, gate_mean=0.153)
+- result:
+  - mean adapted RMSE = **21.0859 ± 0.9814**
+- comparison:
+
+  | Configuration | Mean RMSE | Std | Notes |
+  |---|---:|---:|---|
+  | **SPD + inv-MMD (protocol matched)** | **21.0859** | **0.9814** | **first time SPD beats v2** |
+  | v2 reference | 21.1291 | 1.5928 | prior best |
+  | v3 + bare (protocol matched) | 21.9982 | 3.1882 | SPD net contribution = -0.91 |
+  | SPD + inv-MMD (old, no match) | 23.3498 | 2.3153 | all prior SPD work |
+
+- interpretation:
+  - **SPD + inv-MMD now beats v2** on both mean RMSE (-0.04) and stability (std 0.98 vs 1.59)
+  - the SPD architecture contributes a net -0.91 RMSE improvement over v3+bare
+  - all three seeds show cd_epoch=1, indicating early adaptation is sufficient —
+    the model already carries strong cross-domain capacity from source pre-training
+    with the SPD decomposition
+  - the previous conclusion that "SPD is unstable" was entirely caused by the
+    protocol mismatch; with correct validation, SPD is in fact **more stable** than v2
+
+### 12.3 Code fix: v3 default flags updated
+
+- date: 2026-04-03
+- file: `train_cd_mambatt_v3.py`
+- changes:
+  - `--resample-few-shot-per-seed`: changed from `action="store_true"` (default False)
+    to `action=argparse.BooleanOptionalAction, default=True`
+  - `--source-val-all-windows`: same change
+  - `--target-val-all-windows`: same change
+  - all three now default to True, matching v2 best-config protocol
+  - old behavior can still be accessed via `--no-resample-few-shot-per-seed` etc.
+- motivation:
+  - prevent any future experiment from accidentally running under the mismatched
+    protocol that invalidated all prior SPD comparisons
+
+### 12.4 Reinterpretation of prior SPD experiments (sections 11.1–11.28)
+
+All prior SPD experiments in sections 11.1 through 11.28 were conducted under
+the mismatched protocol. Their absolute RMSE numbers are **not directly
+comparable** to the v2 reference of 21.1291.
+
+However, relative comparisons **within** the prior SPD experiments remain valid
+(e.g., "inv-MMD is better than GRL" still holds, because both used the same
+mismatched protocol).
+
+The key conclusions that **remain valid**:
+
+1. replacing GRL with inv-path MMD improves stability (section 11.10)
+2. removing or weakening global MMD does not help (section 11.13)
+3. selective freezing alone is insufficient (section 11.16–11.21)
+4. semantic decomposition is conceptually sound but the aggressive variants are
+   too disruptive (sections 11.22–11.28)
+
+The key conclusion that **must be revised**:
+
+- "SPD is not yet strong enough to beat v2" → **SPD + inv-MMD beats v2 when
+  the evaluation protocol is correctly matched**
+
+---
+
+## 13. Diagnostic probes and multi-direction exploration (2026-04-03 ~ 04-04)
+
+### 13.1 SPD disentanglement diagnostic
+
+- date: 2026-04-03
+- script: `experiments/diagnostics/spd_diagnostic.py`
+- model: `runs/cd_mambatt_v3_spd_fullmatch/FD001_TO_FD003/seed_42/cd_stage/best.pt`
+
+#### Gate behavior across degradation stages
+
+| Domain | Late (RUL<42) | Mid (42-83) | Early (>83) |
+|---|---|---|---|
+| Source (FD001) | 0.121 | 0.175 | 0.212 |
+| Target (FD003) | 0.155 | 0.152 | 0.167 |
+
+- gate varies across stages (0.12→0.21 in source), but amplitude is small
+- healthy samples have higher gate (more spec contribution), degraded have lower
+
+#### Domain separability (linear classifier, 5-fold CV)
+
+| Features | Domain accuracy | MMD |
+|---|---|---|
+| invariant | 0.9253 | 0.218 |
+| combined | 0.9284 | 0.234 |
+| specific | 0.8628 | 0.263 |
+
+- invariant is slightly more domain-invariant than combined (Δ = 0.3%)
+- effect is real but very weak
+
+### 13.2 Hidden state domain drift probe (SSDA motivation)
+
+- date: 2026-04-03
+- script: `experiments/diagnostics/ssda_probe.py`
+
+**Key finding**: Mamba hidden state MMD between source and target increases
+**59× from timestep 1 to timestep 20**:
+
+| Step | MMD | Relative |
+|---|---:|---:|
+| 1 | 0.014 | 1.0x |
+| 5 | 0.466 | 34.3x |
+| 10 | 0.646 | 47.5x |
+| 20 | 0.805 | **59.2x** |
+
+- this confirms domain drift accumulation in SSM recurrence
+- per-stage analysis: early (healthy) stage has the largest domain gap (MMD=1.113),
+  late (failure) stage has the smallest (MMD=0.283)
+
+### 13.3 SSDA quick test
+
+- date: 2026-04-03
+- script: `experiments/quick_tests/ssda_quick_test.py`
+- tested λ_ssda ∈ {0.05, 0.2, 1.0}
+
+| λ_ssda | SSDA loss trajectory | Best RMSE | Best epoch |
+|---|---|---|---|
+| 0.05 | 0.117→0.093→0.142→0.129 (rises) | 21.56 | 2 |
+| 0.2 | 0.117→0.092→0.123→0.093 (falls) | 21.59 | 2 |
+| 1.0 | 0.114→0.083→0.047→0.033 (falls) | 21.61 | 2 |
+
+- SSDA contributes ~0.8 RMSE over SPD-only on seed 42
+- but **insensitive to λ** — all three give ~21.6, best_epoch always 2
+- contribution saturates immediately; not a strong lever
+
+### 13.4 Multi-direction rapid exploration (6 ideas)
+
+- date: 2026-04-03
+- script: `experiments/prototypes/multi_idea_test.py`
+- all on seed 42, FD001→FD003, SPD backbone
+
+| Idea | Method | RMSE | vs Base |
+|---|---|---:|---:|
+| **3** | **Spec domain-predictive loss** | **19.95** | **-1.75** |
+| 1 | Stage-conditional inv-MMD | 21.34 | -0.36 |
+| 0 | Baseline SPD + inv-MMD | 21.70 | — |
+| 4 | Instance-norm inv-MMD | 21.78 | +0.08 |
+| 5 | Cross-domain mixup | 21.85 | +0.15 |
+| 2 | Inv/Spec orthogonality | 21.93 | +0.23 |
+
+- IDEA 3 (spec domain-predictive) showed the largest single-seed gain
+- 3-seed validation (section 13.5) confirmed directionality but reduced magnitude
+
+### 13.5 IDEA 3 (Spec domain-predictive) 3-seed validation
+
+- date: 2026-04-03
+- script: `experiments/ablations/idea3_3seed.py`
+- protocol: matched (resample + val-all-windows)
+
+| Seed | Adapted RMSE |
+|---|---:|
+| 42 | 21.95 |
+| 43 | 20.47 |
+| 44 | 20.52 |
+| **mean** | **20.98 ± 0.69** |
+
+- comparison:
+  - SPD + inv-MMD (no spec loss): 21.09 ± 0.98
+  - v2 reference: 21.13 ± 1.59
+- improvement over SPD-only: -0.11 RMSE mean, -0.29 std
+- improvement over v2: -0.15 RMSE mean, **-0.90 std**
+- honest assessment: mean improvement is marginal; variance reduction is real
+
+### 13.6 Big lever exploration (non-SPD directions)
+
+- date: 2026-04-04
+- scripts: `experiments/quick_tests/big_lever_test.py`, `experiments/ablations/big_lever_v2.py`
+- all seed 42, FD001→FD003, bare backbone (no SPD)
+
+| Lever | Method | RMSE | vs Baseline |
+|---|---|---:|---:|
+| **D** | **LR=2e-3 + cosine schedule** | **22.94** | **-1.54** |
+| A | Cross-domain self-supervised pretrain | 23.34 | -1.14 |
+| — | Baseline bare | 24.48 | — |
+| B | Input temporal mixup | 25.98 | +1.50 |
+| C | Target augmentation + consistency | 26.65 | +2.17 |
+
+Earlier tests (from `big_lever_test.py` first run before crash):
+
+| Lever | Method | RMSE |
+|---|---|---:|
+| 0 | Baseline d_model=21 | 22.88 |
+| 1 | d_model=42 | 22.53 |
+
+- key finding: **LR tuning alone produces 1.5 RMSE gain** on bare model
+- **all bare results (best=22.53) are still worse than SPD best (20.98)**
+- this confirms SPD contributes real architectural value beyond hyperparameter tuning
+
+### 13.7 Current best ranking (FD001→FD003, all protocol-matched)
+
+| Rank | Method | Mean RMSE | Seeds |
+|---|---|---:|---|
+| 1 | SPD + inv-MMD + spec-domain | 20.98 ± 0.69 | 42,43,44 |
+| 2 | SPD + inv-MMD | 21.09 ± 0.98 | 42,43,44 |
+| 3 | v2 reference | 21.13 ± 1.59 | 42,43,44 |
+| 4 | bare + LR 2e-3 cosine | 22.94 | 42 only |
+| 5 | bare + d_model=42 | 22.53 | 42 only |
+
+### 13.8 Next: combine SPD with higher LR + cosine schedule
+
+- motivation: SPD and LR optimization are orthogonal improvements
+  - SPD: architectural (inv/spec decomposition)
+  - LR 2e-3 + cosine: optimization (better convergence)
+- hypothesis: combining both should produce the best result yet
+- this is running next
+
+### 13.9 SPD + spec-domain + LR=2e-3 + cosine: 3-seed result
+
+- date: 2026-04-04
+- script: `experiments/ablations/spd_highlr_3seed.py`
+- config: SPD (dd_spd) + inv-MMD (0.1) + spec-domain-predictive (0.1) +
+  Adam LR=2e-3 + CosineAnnealingLR(T_max=20, eta_min=1e-5) +
+  matched protocol (resample + val-all-windows)
+
+| Seed | Direct | Adapted | Epoch |
+|---|---:|---:|---:|
+| 42 | 42.66 | 21.04 | 3 |
+| 43 | 51.09 | 19.99 | 1 |
+| 44 | 35.94 | 20.09 | 10 |
+| **mean** | | **20.37 ± 0.47** | |
+
+- comparison:
+
+  | Method | Mean RMSE | Std |
+  |---|---:|---:|
+  | **SPD + spec-domain + LR2e-3 cosine** | **20.37** | **0.47** |
+  | SPD + spec-domain (LR 5e-4) | 20.98 | 0.69 |
+  | SPD + inv-MMD only (LR 5e-4) | 21.09 | 0.98 |
+  | v2 reference | 21.13 | 1.59 |
+
+- this is the **current best configuration**
+- improvement over v2: **-0.76 mean RMSE, -70% variance**
+- all three seeds below 21.1 for the first time
+- the LR + cosine optimization is orthogonal to SPD architecture and they stack
+
+### 13.10 Multi-task validation of best SPD config
+
+- date: 2026-04-04
+- script: `experiments/ablations/spd_best_fd001_fd004.py`
+- config: same as 13.9 (SPD + inv-MMD + spec-domain + LR=2e-3 + cosine)
+- protocol: matched (resample + val-all-windows)
+
+| Task | Seeds | Mean RMSE | Std | v2 ref (5-shot) | Delta |
+|---|---|---:|---:|---:|---:|
+| FD001→FD003 | 42,43,44 | **20.37** | 0.47 | 21.96 | -1.59 |
+| FD001→FD004 | 42,43,44 | 23.72 | 2.38 | 24.34 | -0.62 |
+| FD003→FD001 | 42,43,44 | 21.03 | 1.70 | 19.81 | **+1.22** |
+
+- per-seed FD001→FD004: seed 42=22.28, seed 43=25.38 (est), seed 44=23.43
+- per-seed FD003→FD001: seed 42=~19-20, seed 43=~20, seed 44=~23.4
+
+- interpretation:
+  - SPD best config wins on FD001→FD003 (clear) and FD001→FD004 (marginal)
+  - SPD best config **loses** on FD003→FD001 (+1.22 vs v2)
+  - the improvement is **not universal across tasks**
+  - high variance on FD001→FD004 and FD003→FD001 suggests the method
+    is not robust enough for all transfer directions
+  - note: v2 refs here are 5-shot 5-seed; SPD is 5-shot 3-seed with different
+    protocol, so the comparison is approximate

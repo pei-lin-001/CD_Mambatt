@@ -150,6 +150,9 @@ class MambAttRegressor(nn.Module):
         transformer_inner_dropout: float = 0.0,
         mamba_block_mode: str = "bare",
         spd_gate_init_bias: float = -2.0,
+        spd_scan_mode: str = "mixed",
+        spd_gate_mode: str = "token",
+        spd_gate_scheme: str = "shared",
         spd_predictor_mode: str = "shared_head",
     ) -> None:
         super().__init__()
@@ -159,6 +162,12 @@ class MambAttRegressor(nn.Module):
             raise ValueError("transformer_impl must be 'custom' or 'torch'")
         if mamba_block_mode not in {"bare", "prenorm_residual", "dd_spd"}:
             raise ValueError("mamba_block_mode must be 'bare', 'prenorm_residual', or 'dd_spd'")
+        if spd_scan_mode not in {"mixed", "dual_state"}:
+            raise ValueError("spd_scan_mode must be 'mixed' or 'dual_state'")
+        if spd_gate_mode not in {"token", "window"}:
+            raise ValueError("spd_gate_mode must be 'token' or 'window'")
+        if spd_gate_scheme not in {"shared", "dt_bc"}:
+            raise ValueError("spd_gate_scheme must be 'shared' or 'dt_bc'")
         if spd_predictor_mode not in {"shared_head", "decomposed_residual", "shared_aux_residual"}:
             raise ValueError(
                 "spd_predictor_mode must be 'shared_head', 'decomposed_residual', or 'shared_aux_residual'"
@@ -198,6 +207,9 @@ class MambAttRegressor(nn.Module):
                         d_conv=d_conv,
                         expand=expand,
                         spd_gate_init_bias=spd_gate_init_bias,
+                        spd_scan_mode=spd_scan_mode,
+                        spd_gate_mode=spd_gate_mode,
+                        spd_gate_scheme=spd_gate_scheme,
                     )
                     for _ in range(num_mamba_layers)
                 ]
@@ -205,6 +217,9 @@ class MambAttRegressor(nn.Module):
         self.positional_encoding = PositionalEncoding(d_model=d_model)
         self.transformer_impl = transformer_impl
         self.mamba_block_mode = mamba_block_mode
+        self.spd_scan_mode = spd_scan_mode
+        self.spd_gate_mode = spd_gate_mode
+        self.spd_gate_scheme = spd_gate_scheme
         self.spd_predictor_mode = spd_predictor_mode
         if transformer_impl == "custom":
             self.transformer_blocks = nn.ModuleList(
@@ -244,6 +259,24 @@ class MambAttRegressor(nn.Module):
             self.inv_head = None
             self.spec_head = None
 
+    def _forward_mamba_sequence(
+        self,
+        x: torch.Tensor,
+        *,
+        return_aux: bool,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor] | None]:
+        if x.device.type != "cuda":
+            raise RuntimeError("MambAttRegressor requires CUDA because the installed Mamba kernels are GPU-only.")
+
+        hidden = self.input_proj(x)
+        last_block_aux: dict[str, torch.Tensor] | None = None
+        for block in self.mamba_blocks:
+            if return_aux and isinstance(block, DDMambaBlock):
+                hidden, last_block_aux = block(hidden, return_aux=True)
+            else:
+                hidden = block(hidden)
+        return hidden, last_block_aux
+
     def _decode_sequence(self, hidden: torch.Tensor) -> torch.Tensor:
         hidden = hidden.transpose(0, 1)
         hidden = self.positional_encoding(hidden)
@@ -255,16 +288,7 @@ class MambAttRegressor(nn.Module):
         return hidden[-1]
 
     def _encode_internal(self, x: torch.Tensor, *, return_aux: bool) -> torch.Tensor | dict[str, torch.Tensor]:
-        if x.device.type != "cuda":
-            raise RuntimeError("MambAttRegressor requires CUDA because the installed Mamba kernels are GPU-only.")
-
-        hidden = self.input_proj(x)
-        last_block_aux: dict[str, torch.Tensor] | None = None
-        for block in self.mamba_blocks:
-            if return_aux and isinstance(block, DDMambaBlock):
-                hidden, last_block_aux = block(hidden, return_aux=True)
-            else:
-                hidden = block(hidden)
+        hidden, last_block_aux = self._forward_mamba_sequence(x, return_aux=return_aux)
         pre_transformer_hidden = hidden
         features = self._decode_sequence(pre_transformer_hidden)
         if not return_aux:
@@ -280,12 +304,25 @@ class MambAttRegressor(nn.Module):
             invariant_features = self._decode_sequence(last_block_aux["inv_sequence"])
             outputs["invariant_features"] = invariant_features
             outputs["specific_features"] = features - invariant_features
+            if "conv_sequence" in last_block_aux:
+                outputs["frontend_features"] = last_block_aux["conv_sequence"].mean(dim=1)
+                outputs["frontend_last"] = last_block_aux["conv_sequence"][:, -1, :]
             outputs["gate_sequence"] = last_block_aux["gate_sequence"]
             outputs["gate_mean"] = last_block_aux["gate_mean"]
+            if "gate_dt_sequence" in last_block_aux:
+                outputs["gate_dt_sequence"] = last_block_aux["gate_dt_sequence"]
+                outputs["gate_dt_mean"] = last_block_aux["gate_dt_mean"]
+            if "gate_bc_sequence" in last_block_aux:
+                outputs["gate_bc_sequence"] = last_block_aux["gate_bc_sequence"]
+                outputs["gate_bc_mean"] = last_block_aux["gate_bc_mean"]
         return outputs
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         return self._encode_internal(x, return_aux=False)
+
+    def forward_mamba_sequence(self, x: torch.Tensor) -> torch.Tensor:
+        hidden, _ = self._forward_mamba_sequence(x, return_aux=False)
+        return hidden
 
     def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         return self.encode(x)
@@ -337,4 +374,149 @@ class MambAttRegressor(nn.Module):
             predictions = self.predict_from_output_dict(outputs)
             return predictions["prediction"]
         features = self.forward_features(x)
+        return self.predict_from_features(features)
+
+    @staticmethod
+    def extract_encoder_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        prefixes = ("input_proj.", "mamba_blocks.")
+        return {key: value for key, value in state_dict.items() if key.startswith(prefixes)}
+
+
+class DualPathMambAttRegressor(nn.Module):
+    """Dual-path architecture: Mamba+Attention path (temporal) + Attention-only path (domain-invariant).
+
+    The attention-only path bypasses Mamba entirely, avoiding the hidden-state
+    domain drift that accumulates through SSM recurrence.  Both paths share the
+    same Transformer decoder weights.  An adaptive gate fuses the two paths,
+    learning to shift reliance toward the drift-free attention features under
+    domain shift.
+
+    Cross-domain training should apply MMD alignment on the attention-only path
+    features (``features_attn``) while leaving the full MambAtt path unconstrained.
+    """
+
+    def __init__(
+        self,
+        input_dim: int = 21,
+        d_model: int = 21,
+        d_state: int = 16,
+        d_conv: int = 8,
+        expand: int = 2,
+        num_mamba_layers: int = 1,
+        num_transformer_layers: int = 3,
+        num_heads: int = 7,
+        dropout: float = 0.5,
+        dim_feedforward: int = 2048,
+        transformer_impl: str = "custom",
+        transformer_norm_mode: str = "pre",
+        transformer_inner_dropout: float = 0.0,
+        mamba_block_mode: str = "bare",
+        fusion_hidden_dim: int | None = None,
+        fusion_gate_init_bias: float = 0.0,
+    ) -> None:
+        super().__init__()
+        if d_model % num_heads != 0:
+            raise ValueError("d_model must be divisible by num_heads")
+
+        self.input_proj = nn.Identity() if input_dim == d_model else nn.Linear(input_dim, d_model)
+
+        # Mamba blocks (Path A only)
+        if mamba_block_mode == "bare":
+            self.mamba_blocks = nn.ModuleList(
+                [MambaBlock(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+                 for _ in range(num_mamba_layers)]
+            )
+        elif mamba_block_mode == "prenorm_residual":
+            self.mamba_blocks = nn.ModuleList(
+                [ResidualMambaBlock(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+                 for _ in range(num_mamba_layers)]
+            )
+        else:
+            raise ValueError(f"DualPathMambAttRegressor supports 'bare' or 'prenorm_residual' mamba_block_mode, got '{mamba_block_mode}'")
+
+        # Shared Transformer decoder + PE
+        self.positional_encoding = PositionalEncoding(d_model=d_model)
+        if transformer_impl == "custom":
+            self.transformer_blocks = nn.ModuleList(
+                [TransformerBlock(
+                    d_model=d_model, num_heads=num_heads,
+                    dim_feedforward=dim_feedforward, norm_mode=transformer_norm_mode,
+                    inner_dropout=transformer_inner_dropout,
+                ) for _ in range(num_transformer_layers)]
+            )
+            self.transformer_encoder = None
+        else:
+            self.transformer_blocks = None
+            self.transformer_encoder = TorchTransformerStack(
+                d_model=d_model, num_heads=num_heads,
+                dim_feedforward=dim_feedforward, num_layers=num_transformer_layers,
+                dropout=dropout, norm_mode=transformer_norm_mode,
+            )
+
+        # Fusion gate
+        gate_hidden = fusion_hidden_dim or d_model
+        self.fusion_gate = nn.Sequential(
+            nn.Linear(d_model * 2, gate_hidden),
+            nn.ReLU(),
+            nn.Linear(gate_hidden, 1),
+        )
+        with torch.no_grad():
+            self.fusion_gate[-1].bias.fill_(fusion_gate_init_bias)
+
+        self.output_dropout = nn.Dropout(dropout)
+        self.head = nn.Linear(d_model, 1)
+
+    def _decode_sequence(self, hidden: torch.Tensor) -> torch.Tensor:
+        """Shared Transformer decoder: (B, T, D) → (D,) last-timestep features."""
+        hidden = hidden.transpose(0, 1)
+        hidden = self.positional_encoding(hidden)
+        if self.transformer_blocks is not None:
+            for block in self.transformer_blocks:
+                hidden = block(hidden)
+        else:
+            hidden = self.transformer_encoder(hidden)
+        return hidden[-1]
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        """Returns fused features."""
+        outputs = self.forward_features_with_aux(x)
+        return outputs["features"]
+
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        return self.encode(x)
+
+    def forward_features_with_aux(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        if x.device.type != "cuda":
+            raise RuntimeError("DualPathMambAttRegressor requires CUDA (Mamba kernels are GPU-only).")
+
+        proj = self.input_proj(x)
+
+        # Path A: Full MambAtt (Mamba → Transformer)
+        h_mamba = proj
+        for block in self.mamba_blocks:
+            h_mamba = block(h_mamba)
+        features_mamba = self._decode_sequence(h_mamba)
+
+        # Path B: Attention-only (bypass Mamba → Transformer)
+        features_attn = self._decode_sequence(proj)
+
+        # Adaptive fusion
+        gate = torch.sigmoid(self.fusion_gate(torch.cat([features_mamba, features_attn], dim=-1)))
+        features = gate * features_mamba + (1.0 - gate) * features_attn
+
+        return {
+            "features": features,
+            "features_mamba": features_mamba,
+            "features_attn": features_attn,
+            "domain_features": features_attn,
+            "pre_transformer_features": features,
+            "gate_mean": gate.mean(),
+            "gate": gate,
+        }
+
+    def predict_from_features(self, features: torch.Tensor) -> torch.Tensor:
+        return self.head(self.output_dropout(features)).squeeze(-1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        features = self.encode(x)
         return self.predict_from_features(features)

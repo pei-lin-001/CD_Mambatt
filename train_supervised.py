@@ -216,6 +216,9 @@ def build_model(args: argparse.Namespace, input_dim: int) -> MambAttRegressor:
         transformer_inner_dropout=args.transformer_inner_dropout,
         mamba_block_mode=args.mamba_block_mode,
         spd_gate_init_bias=float(getattr(args, "spd_gate_init_bias", -2.0)),
+        spd_scan_mode=str(getattr(args, "spd_scan_mode", "mixed")),
+        spd_gate_mode=str(getattr(args, "spd_gate_mode", "token")),
+        spd_gate_scheme=str(getattr(args, "spd_gate_scheme", "shared")),
         spd_predictor_mode=str(getattr(args, "spd_predictor_mode", "shared_head")),
     )
 
@@ -342,6 +345,9 @@ def main() -> None:
     parser.add_argument("--transformer-inner-dropout", type=float, default=0.0, help="Dropout applied inside Transformer residual branches")
     parser.add_argument("--mamba-block-mode", choices=("bare", "prenorm_residual", "dd_spd"), default="bare", help="Mamba block mode: original bare block, pre-norm residual wrapper, or SPD-style DD-Mamba block")
     parser.add_argument("--spd-gate-init-bias", type=float, default=-2.0, help="Initial bias for the SPD gate when --mamba-block-mode=dd_spd")
+    parser.add_argument("--spd-scan-mode", choices=("mixed", "dual_state"), default="mixed", help="SPD scan mode: original parameter-mixing scan or dual-state isolated scan")
+    parser.add_argument("--spd-gate-mode", choices=("token", "window"), default="token", help="SPD gate mode: token-wise gate or window-level shared gate")
+    parser.add_argument("--spd-gate-scheme", choices=("shared", "dt_bc"), default="shared", help="SPD gate scheme: one shared gate or separate dt/bc gates")
     parser.add_argument("--val-all-windows", action="store_true", help="Validate on all sliding windows instead of only the last window per validation engine")
     parser.add_argument("--device", default="auto", help="auto, cuda, or cpu")
     parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers")

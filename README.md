@@ -12,23 +12,35 @@ This repository is now in the **baseline reproduction + cross-domain experimenta
 ## Main scripts
 
 - `train_supervised.py` — supervised target-paper baseline reproduction
+- `train_self_supervised.py` — same-subset self-supervised reproduction
 - `train_cross_domain_baseline.py` — direct / fine-tune cross-domain baselines
-- `train_cd_mambatt_v2.py` — current working cross-domain CD-MambAtt runner
+- `train_cd_mambatt_v1.py` — first cross-domain MMD version
+- `train_cd_mambatt_v2.py` — current stable cross-domain runner
+- `train_cd_mambatt_v3.py` — SPD / DD-SSM and later mechanism experiments
 - `train_fomln_baseline.py` — reproduced FOMLN baseline runner
+- `train_minimal.py` — small smoke / sanity entrypoint
 
-## Main code modules
+## Repository layout
 
-- `cd_mambatt/data.py` — C-MAPSS loading, normalization, window construction
-- `cd_mambatt/models/mambatt.py` — current MambAtt backbone
-- `cd_mambatt/losses/` — current MMD / monotonic / contrastive losses
+- `cd_mambatt/` — core package (`data`, `models`, `losses`, `self_supervised`, etc.)
+- `experiments/` — one-off experiment runners, now grouped into:
+  - `ablations/`
+  - `diagnostics/`
+  - `prototypes/`
+  - `quick_tests/`
+- `scripts/` — reusable batch runners and result aggregation tools
+- `docs/` — project docs and experiment records
+- `runs/` — experiment outputs
 
 ## Documentation
 
 Start here:
 
 - `docs/README.md`
+- `docs/project_overview_zh_2026-04-08.md`
 - `docs/project_status.md`
 - `docs/supervised_reproduction.md`
+- `docs/self_supervised_reproduction.md`
 - `docs/published_baselines.md`
 - `docs/dd_ssm_roadmap.md`
 - `docs/cross_domain_experiment_log.md`

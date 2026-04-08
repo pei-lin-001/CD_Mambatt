@@ -1,6 +1,6 @@
 # CD-MambAtt Project Status
 
-Last updated: `2026-04-03`
+Last updated: `2026-04-05`
 
 ## 1. Current phase
 
@@ -16,7 +16,10 @@ Current status in one paragraph:
 > exists, but the current head-to-head comparison should be described as
 > **matched-shot in-house comparison with remaining protocol mismatches**, not as a
 > fully strict apples-to-apples benchmark. The architecture-level `DD-SSM / SPD`
-> branch is now implemented and runnable on CUDA. The latest finding is that
+> branch is now implemented and runnable on CUDA. A paper-style same-subset
+> **self-supervised MambAtt pipeline is also now implemented**, with FD001 nearly
+> matching the paper's one-shot SSL number, although the four-subset match is
+> incomplete and that line is currently paused. The latest finding is that
 > **the first hard semantic-SPD redesign underperformed, but the newer
 > shared-head-anchored semantic variant with source semantic warmup is now
 > showing the first real positive signal**, even though it still has not
@@ -32,6 +35,7 @@ Current status in one paragraph:
 - dataset prepared on `E:` and linked into WSL
 - main runners available:
   - `train_supervised.py`
+  - `train_self_supervised.py`
   - `train_cross_domain_baseline.py`
   - `train_cd_mambatt_v2.py`
   - `train_fomln_baseline.py`
@@ -39,6 +43,7 @@ Current status in one paragraph:
 ### 2.2 Baseline reproduction
 
 - target-paper supervised MambAtt baseline: **implemented and aligned at the structure level**
+- target-paper same-subset self-supervised MambAtt path: **implemented and archived**
 - cross-domain `CD-MambAtt v2`: **implemented and working**
 - reproduced `FOMLN` baseline: **implemented and runnable on CUDA**
 
@@ -103,70 +108,42 @@ Interpretation:
 
 Negative delta means CD-MambAtt is better.
 
-### 3.4 `DD-SSM / SPD v0` status on canonical `FD001 -> FD003`
+### 3.4 `DD-SSM / SPD` current best results (2026-04-04)
 
-Current best SPD single-seed runs:
+**Best config**: SPD (dd_spd) + inv-MMD (0.1) + spec-domain-predictive (0.1) +
+Adam LR=2e-3 + CosineAnnealingLR(T_max=20, eta_min=1e-5) +
+matched protocol (resample + val-all-windows)
 
-- `inv_alignment_mode = mmd`, `domain_feature_tap = inv_mean`, `lambda_inv_mmd = 0.2`, seed `42`:
-  - target RMSE = **20.8015**
+#### Single-task result (FD001→FD003, 3 seeds):
 
-Current multi-seed check:
+- mean RMSE = **20.37 ± 0.47**
+- per-seed: 42=21.04, 43=19.99, 44=20.09
+- v2 reference: 21.13 ± 1.59
+- **improvement: -0.76 mean, -70% variance**
 
-- SPD v0 + GRL (`seeds = 42,43,44`):
-  - mean target RMSE = **24.0269**
-  - std = **2.3729**
-- SPD v0 + invariant-path MMD (`seeds = 42,43,44`):
-  - best current configuration:
-    - `lambda_inv_mmd = 0.1`
-    - `lambda_mmd = 0.1`
-  - mean target RMSE = **23.3498**
-  - std = **2.3153**
-- SPD v0 + selective freezing `spec_gate_head` (`seeds = 42,43`):
-  - mean target RMSE = **27.0818**
-  - std = **1.7057**
-- SPD v0 + selective freezing `spec_gate_transformer_head`:
-  - `2-seed` pilot (`42,43`):
-    - mean target RMSE = **23.0026**
-    - std = **2.4471**
-  - `3-seed` full run (`42,43,44`):
-    - mean target RMSE = **24.1388**
-    - std = **1.5378**
-- SPD v0 + `freeze 5 epochs -> full unfreeze` (`spec_gate_transformer_head`, `seeds = 42,43`):
-  - mean target RMSE = **23.6333**
-  - std = **2.1958**
-- SPD v0 + stronger invariant-path MMD (`lambda_inv_mmd = 0.2`, `seeds = 42,43,44`):
-  - mean target RMSE = **23.3726**
-  - std = **2.3401**
-- `CD-MambAtt v2` matched `3-seed` reference:
-  - mean target RMSE = **21.1291**
-  - std = **1.5928**
+#### Multi-task validation (3 seeds each):
 
-Interpretation:
+| Task | SPD best | v2 ref (5-shot) | Delta | Status |
+|---|---:|---:|---:|---|
+| FD001→FD003 | **20.37 ± 0.47** | 21.96 | -1.59 | ✅ 赢 |
+| FD001→FD004 | 23.72 ± 2.38 | 24.34 | -0.62 | ⚠️ 微赢，方差大 |
+| FD003→FD001 | 21.03 ± 1.70 | 19.81 | **+1.22** | ❌ 输 |
 
-- the SPD implementation is real and can be competitive on a good seed
-- replacing GRL with invariant-path MMD improves SPD
-- but the current SPD branch is **still not yet strong enough** to beat v2
-  under multi-seed evaluation
-- scalar loss-weight scans have mostly saturated:
-  - removing or weakening the original global MMD did not help
-  - increasing `lambda_inv_mmd` to `0.2` did not improve the `3-seed` mean
-- selective freezing was tested and is currently **not sufficient**:
-  - very restrictive freezing (`spec_gate_head`) collapses badly
-  - broader freezing (`spec_gate_transformer_head`) reduces variance but hurts
-    the `3-seed` mean
-  - staged unfreezing approximately ties the non-freeze baseline on `2` seeds
-    but does not beat it
-- the next likely issue remains architectural:
-  the inv/spec role separation may still be too weak in the current adaptation protocol
+#### Diagnostic findings:
 
-### 3.5 Semantic-SPD v1/v2 status on canonical `FD001 -> FD003`
+- Mamba hidden state domain drift: **59× amplification** from step 1 to step 20
+- SPD disentanglement is weak: inv vs combined domain accuracy Δ = 0.3%
+- Gate barely moves (0.12→0.18), spec branch contributes ~15%
+- SSDA (hidden state alignment) saturates immediately, insensitive to λ
+- Spec domain-predictive loss was the most effective auxiliary loss
+- Higher LR (2e-3 + cosine) was orthogonal to SPD and they stack
 
-Purpose of this branch:
+### 3.5 Semantic-SPD v1/v2 status (SUPERSEDED)
 
-- move beyond generic feature-level alignment
-- test the novelty-safe direction from `innovation_novelty_assessment.md`
-- make the invariant path semantically responsible for the main RUL trend and
-  restrict the specific path to residual correction
+> **Note**: the semantic-SPD experiments below were all conducted under the
+> mismatched protocol. Given that SPD v0 + inv-MMD already beats v2 with the
+> correct protocol, the semantic-SPD direction is no longer the priority.
+> These results are retained for reference only.
 
 Implemented changes:
 
@@ -233,6 +210,34 @@ Interpretation:
 - that is still slightly weaker than the earlier SPD v0 invariant-MMD
   reference (**23.3498**), but it closes much of the gap
 
+### 3.7 Same-subset self-supervised MambAtt reproduction snapshot (PAUSED)
+
+Primary record:
+
+- see [`self_supervised_reproduction.md`](./self_supervised_reproduction.md)
+
+Current same-subset one-shot SSL snapshot:
+
+| Subset | Paper Table 5 | Current local result | Note |
+|---|---:|---:|---|
+| `FD001` | 31.7270 | **31.6116 ± 2.5595** | 3 seeds, essentially matched |
+| `FD002` | 30.3269 | **23.5244** | seed 42 only |
+| `FD003` | 32.3329 | **35.5230 ± 2.6474** | 3 seeds |
+| `FD004` | 32.6633 | **38.8006** | seed 42 only |
+
+Implemented code for this branch:
+
+- `cd_mambatt/self_supervised.py`
+- `train_self_supervised.py`
+- `cd_mambatt/models/mambatt.py` encoder-sequence export helpers
+
+Current judgment:
+
+- the SSL path is **implemented and reusable**
+- FD001 is strong enough to validate the implementation direction
+- FD003/FD004 remain off-paper
+- therefore this branch is being **recorded and paused**, rather than pushed further right now
+
 ## 4. What we can and cannot claim right now
 
 ### Can claim
@@ -241,43 +246,39 @@ Interpretation:
 - `CD-MambAtt v2` clearly improves over direct transfer on multiple C-MAPSS tasks
 - reproduced `FOMLN` exists and current matched-shot numbers favor CD-MambAtt on 4 overlapping tasks
 - `DD-SSM / SPD v0` is implemented inside the Mamba path and validated on CUDA
-- semantic-SPD code path is implemented and trainable on CUDA
+- **SPD v0 + inv-MMD beats v2 on both mean RMSE and cross-seed stability** on the canonical `FD001 -> FD003` task (3 seeds, matched protocol)
+- **SPD provides a net -0.91 RMSE improvement** over v3+bare under the same protocol
 
 ### Cannot claim yet
 
 - exact author-level reproduction of the target paper supervised number
 - strict publication-grade apples-to-apples superiority over `FOMLN`
-- stable architecture-level superiority from the current `SPD v0` branch
-- empirical superiority from the first semantic-SPD redesign
+- SPD superiority across **multiple tasks** (only FD001→FD003 tested so far)
+- SPD superiority at 5-seed scale (only 3 seeds so far)
 
 ## 5. Current bottlenecks
 
 1. supervised reproduction gap to the target paper remains
-2. current `CD-MambAtt v2` innovation depth is still insufficient for a strong paper
-3. the original GRL-based SPD branch is unstable across seeds
-4. after replacing GRL with MMD, SPD is more stable but still not clearly better than v2
-5. the first hard semantic-SPD redesign proved the novelty direction is
-   implementable, but its predictor decomposition was too aggressive
-6. the softer shared-aux semantic-SPD is better, yet still not consistently
-   stronger than the older SPD v0 reference
-7. current evidence suggests the main missing piece is deeper **source semantic
-   grounding** of the invariant/specific decomposition
-8. simple loss-weight tuning around the current SPD scaffold shows diminishing returns
-9. simple selective-freezing / warm-start freeze schedules do not yet produce a net gain
-10. `FOMLN` comparison is useful but still not perfectly fair
-11. `MetaDFKN` remains a reported threat, but protocol ambiguity is not yet cleaned enough for fair reproduction
+2. ~~SPD innovation depth insufficient~~ → SPD is now the main innovation
+3. ~~GRL unstable~~ → replaced with inv-MMD + spec-domain-predictive
+4. ~~protocol mismatch~~ → resolved (v3 defaults fixed)
+5. **SPD wins on FD001→FD003 and FD001→FD004 but loses on FD003→FD001** — need to diagnose task-direction asymmetry
+6. **disentanglement effect is weak** (gate barely moves, domain separability Δ only 0.3%)
+7. **only 3 seeds tested** — need 5 seeds for statistical confidence
+8. `FOMLN` comparison not yet done with SPD
+9. second dataset (XJTU-SY) not yet started
+10. no ablation study yet under matched protocol
 
 ## 6. Next priority
 
 Current recommended priority order:
 
-1. **extend source semantic grounding in the softer semantic-SPD branch**:
-   the next targeted try should move beyond heads-only semantic warmup toward a
-   slightly larger SPD-specific warmup set, so the internal decomposition is
-   semantically calibrated before target adaptation starts
-2. after SPD is stable, add **SSDA** if needed
-3. treat **DAAD** as an auxiliary enhancement, not a co-equal main innovation
-4. baseline track, if resumed, should target a cleaner `MetaDFKN` protocol audit before coding
+1. **diagnose FD003→FD001 failure**: check if LR=2e-3 is too aggressive for small source domains (FD003 has only 100 engines); try LR=1e-3 on this task
+2. **5-seed expansion** on FD001→FD003 with best config
+3. **ablation study** under matched protocol: bare vs SPD vs SPD+inv-MMD vs SPD+inv-MMD+spec-domain
+4. **run SPD on 15-shot** for fair comparison against FOMLN
+5. explore **stronger disentanglement** mechanisms (current gate/separation is too weak)
+6. second dataset (XJTU-SY)
 
 ## 7. Important files
 

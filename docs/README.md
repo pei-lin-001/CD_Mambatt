@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last updated: `2026-04-02`
+Last updated: `2026-04-08`
 
 This directory has been cleaned and merged into a smaller set of primary documents.
 Historical experiment notes were **not deleted**; they were moved into `docs/history/`.
@@ -9,8 +9,10 @@ Historical experiment notes were **not deleted**; they were moved into `docs/his
 
 | File | Purpose |
 |---|---|
+| [`project_overview_zh_2026-04-08.md`](./project_overview_zh_2026-04-08.md) | Chinese project overview for quickly understanding the current code, results, bottlenecks, and next priorities |
 | [`project_status.md`](./project_status.md) | Current project snapshot, key results, fairness judgment, and next priorities |
 | [`supervised_reproduction.md`](./supervised_reproduction.md) | Consolidated target-paper supervised reproduction status |
+| [`self_supervised_reproduction.md`](./self_supervised_reproduction.md) | Same-subset self-supervised MambAtt reproduction status, current code snapshot, and result archive |
 | [`published_baselines.md`](./published_baselines.md) | Consolidated published-baseline audit and reproduction status |
 | [`dd_ssm_roadmap.md`](./dd_ssm_roadmap.md) | Consolidated innovation feasibility judgment and implementation roadmap |
 | [`cross_domain_experiment_log.md`](./cross_domain_experiment_log.md) | **Authoritative experiment log**; preserved for all future additions |
@@ -20,15 +22,17 @@ Historical experiment notes were **not deleted**; they were moved into `docs/his
 
 | Path | Contents |
 |---|---|
+| [`../experiments/`](../experiments/) | One-off experiment scripts, now grouped into `ablations/`, `diagnostics/`, `prototypes/`, and `quick_tests/` |
 | [`history/`](./history/README.md) | Historical experiment analyses, reproduction notes, and baseline audit notes |
 | [`generated/`](./generated/) | Auto-generated result tables and JSON snapshots |
+| [`../scripts/`](../scripts/) | Reusable batch runners, experiment drivers, and result aggregation helpers |
 | [`text/`](./text/) | Extracted text from local PDFs |
 | `*.pdf` | Local paper files and research guide PDFs |
 
 ## Cleanup policy used this round
 
 1. Kept the experiment log untouched.
-2. Merged the must-keep information into the 4 primary documents above.
+2. Merged the must-keep information into the main primary documents above.
 3. Moved historical experiment/reproduction/baseline notes into `history/`.
 4. Deleted redundant planning / review back-and-forth files that were fully superseded.
 
@@ -36,6 +40,7 @@ Historical experiment notes were **not deleted**; they were moved into `docs/his
 
 1. `project_status.md`
 2. `supervised_reproduction.md`
-3. `published_baselines.md`
-4. `dd_ssm_roadmap.md`
-5. `cross_domain_experiment_log.md`
+3. `self_supervised_reproduction.md`
+4. `published_baselines.md`
+5. `dd_ssm_roadmap.md`
+6. `cross_domain_experiment_log.md`

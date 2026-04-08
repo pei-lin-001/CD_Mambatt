@@ -1,6 +1,6 @@
 # Supervised Reproduction Status
 
-Last updated: `2026-04-02`
+Last updated: `2026-04-05`
 
 This file consolidates the old supervised-reproduction notes into one place.
 
@@ -11,8 +11,9 @@ We have reproduced the **supervised baseline path** of the target paper
 
 Important boundary:
 
-- the paper's **self-supervised Section 3.4 losses** are **not yet implemented**
-- therefore the current work covers the paper's **supervised baseline reproduction**, not the full SSL paper package
+- this file only tracks the paper's **supervised baseline reproduction**
+- the paper's **self-supervised Section 3.4 path is now implemented separately**
+- see [`self_supervised_reproduction.md`](./self_supervised_reproduction.md) for the current SSL code/result snapshot
 
 ## 2. Paper-explicit items already aligned
 

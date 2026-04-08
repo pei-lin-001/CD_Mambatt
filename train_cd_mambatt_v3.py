@@ -62,6 +62,7 @@ def model_forward_with_aux(model: nn.Module, windows: torch.Tensor) -> dict[str,
         "features": features,
         "domain_features": features,
         "pre_transformer_features": features,
+        "frontend_features": features,
         "invariant_features": features,
         "specific_features": torch.zeros_like(features),
         "prediction": model.predict_from_features(features),
@@ -70,6 +71,8 @@ def model_forward_with_aux(model: nn.Module, windows: torch.Tensor) -> dict[str,
         "prediction_spec": features.new_zeros((features.shape[0],)),
         "prediction_decomposed": model.predict_from_features(features),
         "gate_mean": features.new_zeros(()),
+        "gate_dt_mean": features.new_zeros(()),
+        "gate_bc_mean": features.new_zeros(()),
     }
 
 
@@ -96,6 +99,68 @@ def residual_reconstruction_loss(outputs: dict[str, torch.Tensor]) -> torch.Tens
     prediction_spec = outputs["prediction_spec"]
     residual_target = prediction_shared - prediction_inv
     return F.mse_loss(prediction_spec, residual_target)
+
+
+def stage_prototype_alignment_loss(
+    features: torch.Tensor,
+    labels: torch.Tensor,
+    stage_statistics: SourceStageStatistics,
+    *,
+    sample_weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if features.ndim != 2:
+        raise ValueError("stage_prototype_alignment_loss expects 2D features")
+    if labels.ndim != 1 or labels.shape[0] != features.shape[0]:
+        raise ValueError("stage_prototype_alignment_loss expects 1D labels matching features")
+    if features.shape[0] == 0:
+        return features.new_zeros(())
+
+    if stage_statistics.normalize_features:
+        features = F.normalize(features, p=2, dim=1)
+    centroids = stage_statistics.centroids[labels]
+    squared_distances = (features - centroids).pow(2).sum(dim=1)
+
+    if sample_weights is None:
+        return squared_distances.mean()
+
+    weights = sample_weights.to(device=features.device, dtype=features.dtype).clamp(min=0.0)
+    weight_sum = weights.sum()
+    if float(weight_sum.detach().cpu()) <= 0.0:
+        return features.new_zeros(())
+    return (weights * squared_distances).sum() / weight_sum
+
+
+def stage_prototype_ce_loss(
+    features: torch.Tensor,
+    labels: torch.Tensor,
+    stage_statistics: SourceStageStatistics,
+    *,
+    sample_weights: torch.Tensor | None = None,
+    temperature: float = 1.0,
+) -> torch.Tensor:
+    if features.ndim != 2:
+        raise ValueError("stage_prototype_ce_loss expects 2D features")
+    if labels.ndim != 1 or labels.shape[0] != features.shape[0]:
+        raise ValueError("stage_prototype_ce_loss expects 1D labels matching features")
+    if features.shape[0] == 0:
+        return features.new_zeros(())
+    if temperature <= 0.0:
+        raise ValueError("stage_prototype_ce_loss temperature must be positive")
+
+    if stage_statistics.normalize_features:
+        features = F.normalize(features, p=2, dim=1)
+    distances = torch.cdist(features, stage_statistics.centroids).pow(2)
+    logits = -distances / float(temperature)
+    losses = F.cross_entropy(logits, labels, reduction="none")
+
+    if sample_weights is None:
+        return losses.mean()
+
+    weights = sample_weights.to(device=features.device, dtype=features.dtype).clamp(min=0.0)
+    weight_sum = weights.sum()
+    if float(weight_sum.detach().cpu()) <= 0.0:
+        return features.new_zeros(())
+    return (weights * losses).sum() / weight_sum
 
 
 def resolve_grl_lambda(epoch: int, total_epochs: int, *, base_lambda: float, warmup_epochs: int) -> float:
@@ -129,10 +194,12 @@ def configure_adaptation_model_params(
     else:
         allowed_names: list[str] = []
         for name, _ in named_params:
-            if freeze_mode in {"head_only", "spec_gate_head", "spec_gate_transformer_head"} and name.startswith("head."):
+            if freeze_mode in {"head_only", "transformer_head", "spec_gate_head", "spec_gate_transformer_head"} and name.startswith("head."):
                 allowed_names.append(name)
                 continue
-            if freeze_mode == "spec_gate_transformer_head" and name.startswith("transformer_blocks."):
+            if freeze_mode in {"transformer_head", "spec_gate_transformer_head"} and (
+                name.startswith("transformer_blocks.") or name.startswith("transformer_encoder.")
+            ):
                 allowed_names.append(name)
                 continue
             if freeze_mode in {"spec_gate_only", "spec_gate_head", "spec_gate_transformer_head"} and (
@@ -190,6 +257,7 @@ def build_adaptation_optimizer(
     trainable_model_params: list[nn.Parameter],
     stage_head: nn.Module,
     domain_discriminator: nn.Module | None,
+    spec_domain_classifier: nn.Module | None,
     *,
     lr: float,
     weight_decay: float,
@@ -197,10 +265,31 @@ def build_adaptation_optimizer(
     return torch.optim.Adam(
         trainable_model_params
         + list(stage_head.parameters())
-        + ([] if domain_discriminator is None else list(domain_discriminator.parameters())),
+        + ([] if domain_discriminator is None else list(domain_discriminator.parameters()))
+        + ([] if spec_domain_classifier is None else list(spec_domain_classifier.parameters())),
         lr=lr,
         weight_decay=weight_decay,
     )
+
+
+def build_lr_scheduler(
+    optimizer: torch.optim.Optimizer,
+    *,
+    scheduler_name: str,
+    total_epochs: int,
+    min_lr: float,
+) -> torch.optim.lr_scheduler._LRScheduler | None:
+    name = str(scheduler_name).lower()
+    if name == "none":
+        return None
+    if name == "cosine":
+        t_max = max(int(total_epochs), 1)
+        return torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=t_max,
+            eta_min=float(min_lr),
+        )
+    raise ValueError(f"Unsupported lr scheduler: {scheduler_name}")
 
 
 def run_semantic_warmup_epoch(
@@ -288,6 +377,12 @@ def get_domain_feature_dim(model: nn.Module, tap: str) -> int:
     base_dim = int(model.head.in_features)
     if tap in {"inv_mean", "pre_transformer_last"}:
         return base_dim
+    if tap == "frontend_mean":
+        first_block = getattr(model, "mamba_blocks", [None])[0]
+        frontend_dim = getattr(first_block, "d_inner", None)
+        if frontend_dim is None:
+            return base_dim
+        return int(frontend_dim)
     if tap == "concat_inv_pre":
         return base_dim * 2
     raise ValueError(f"Unsupported domain feature tap: {tap}")
@@ -298,6 +393,8 @@ def select_domain_features(outputs: dict[str, torch.Tensor], tap: str) -> torch.
         return outputs["domain_features"]
     if tap == "pre_transformer_last":
         return outputs["pre_transformer_features"]
+    if tap == "frontend_mean":
+        return outputs["frontend_features"]
     if tap == "concat_inv_pre":
         return torch.cat([outputs["domain_features"], outputs["pre_transformer_features"]], dim=-1)
     raise ValueError(f"Unsupported domain feature tap: {tap}")
@@ -400,6 +497,7 @@ def run_cd_pseudo_epoch(
     model: nn.Module,
     stage_head: nn.Module,
     domain_discriminator: DomainDiscriminator | None,
+    spec_domain_classifier: nn.Module | None,
     source_loader: DataLoader,
     target_labeled_loader: DataLoader,
     target_unlabeled_loader: DataLoader,
@@ -417,7 +515,10 @@ def run_cd_pseudo_epoch(
     lambda_monotonic: float,
     lambda_domain_adv: float,
     lambda_inv_mmd: float,
+    lambda_spec_domain: float,
     lambda_conditional_inv_mmd: float,
+    lambda_conditional_proto: float,
+    lambda_conditional_proto_ce: float,
     lambda_inv_spec_orth: float,
     lambda_spec_residual: float,
     lambda_inv_aux: float,
@@ -435,12 +536,15 @@ def run_cd_pseudo_epoch(
     inv_alignment_mode: str,
     domain_feature_tap: str,
     stage_feature_mode: str,
+    conditional_target_scope: str,
 ) -> dict[str, float]:
     is_train = optimizer is not None
     model.train(is_train)
     stage_head.train(is_train)
     if domain_discriminator is not None:
         domain_discriminator.train(is_train)
+    if spec_domain_classifier is not None:
+        spec_domain_classifier.train(is_train)
     mse_loss = nn.MSELoss()
     ce_loss = nn.CrossEntropyLoss()
 
@@ -464,7 +568,10 @@ def run_cd_pseudo_epoch(
     total_monotonic_loss = 0.0
     total_domain_adv_loss = 0.0
     total_inv_mmd_loss = 0.0
+    total_spec_domain_loss = 0.0
     total_conditional_inv_mmd_loss = 0.0
+    total_conditional_proto_loss = 0.0
+    total_conditional_proto_ce_loss = 0.0
     total_inv_spec_orth_loss = 0.0
     total_spec_residual_loss = 0.0
     total_inv_aux_loss = 0.0
@@ -480,6 +587,8 @@ def run_cd_pseudo_epoch(
     total_source_domain_accuracy = 0.0
     total_target_domain_accuracy = 0.0
     total_gate_mean = 0.0
+    total_gate_dt_mean = 0.0
+    total_gate_bc_mean = 0.0
 
     context = torch.enable_grad() if is_train else torch.no_grad()
     with context:
@@ -550,13 +659,13 @@ def run_cd_pseudo_epoch(
             else:
                 pseudo_loss = source_features.new_zeros(())
 
-            contrastive_target_features = [target_labeled_features]
+            contrastive_target_features = [target_labeled_stage_features]
             contrastive_target_labels = [target_labeled_stage_labels]
             if accepted_count > 0:
-                contrastive_target_features.append(target_unlabeled_features[accepted_mask])
+                contrastive_target_features.append(target_unlabeled_stage_features[accepted_mask])
                 contrastive_target_labels.append(pseudo_stage_labels[accepted_mask])
             contrastive_loss, contrastive_stats = cross_domain_contrastive_loss(
-                source_features,
+                source_stage_features,
                 source_stage_labels,
                 torch.cat(contrastive_target_features, dim=0),
                 torch.cat(contrastive_target_labels, dim=0),
@@ -609,22 +718,107 @@ def run_cd_pseudo_epoch(
                     "target_domain_accuracy": 0.0,
                 }
 
+            if lambda_spec_domain > 0 and spec_domain_classifier is not None:
+                source_specific_features = source_outputs.get("specific_features")
+                target_specific_features = target_labeled_outputs.get("specific_features")
+                if source_specific_features is not None and target_specific_features is not None:
+                    spec_domain_features = torch.cat([source_specific_features, target_specific_features], dim=0)
+                    spec_domain_labels = torch.cat(
+                        [
+                            torch.zeros(source_specific_features.shape[0], dtype=torch.long, device=source_specific_features.device),
+                            torch.ones(target_specific_features.shape[0], dtype=torch.long, device=target_specific_features.device),
+                        ],
+                        dim=0,
+                    )
+                    spec_domain_loss = F.cross_entropy(spec_domain_classifier(spec_domain_features), spec_domain_labels)
+                else:
+                    spec_domain_loss = source_features.new_zeros(())
+            else:
+                spec_domain_loss = source_features.new_zeros(())
+
             if lambda_conditional_inv_mmd > 0:
-                source_invariant_features = source_outputs.get("invariant_features", source_stage_features)
-                target_conditional_features = [target_labeled_outputs.get("invariant_features", target_labeled_stage_features)]
-                target_conditional_labels = [target_labeled_stage_labels]
-                if accepted_count > 0:
-                    target_conditional_features.append(target_unlabeled_outputs.get("invariant_features", target_unlabeled_stage_features)[accepted_mask])
+                source_invariant_features = source_stage_features
+                target_conditional_features = []
+                target_conditional_labels = []
+                if conditional_target_scope in {"labeled_only", "labeled_accepted"}:
+                    target_conditional_features.append(target_labeled_stage_features)
+                    target_conditional_labels.append(target_labeled_stage_labels)
+                if conditional_target_scope in {"accepted_only", "labeled_accepted"} and accepted_count > 0:
+                    target_conditional_features.append(target_unlabeled_stage_features[accepted_mask])
                     target_conditional_labels.append(pseudo_stage_labels[accepted_mask])
-                conditional_inv_mmd_loss = conditional_gaussian_mmd_loss(
-                    source_invariant_features,
-                    source_stage_labels,
-                    torch.cat(target_conditional_features, dim=0),
-                    torch.cat(target_conditional_labels, dim=0),
-                    sigmas=mmd_sigmas,
-                )
+                if target_conditional_features:
+                    conditional_inv_mmd_loss = conditional_gaussian_mmd_loss(
+                        source_invariant_features,
+                        source_stage_labels,
+                        torch.cat(target_conditional_features, dim=0),
+                        torch.cat(target_conditional_labels, dim=0),
+                        sigmas=mmd_sigmas,
+                    )
+                else:
+                    conditional_inv_mmd_loss = source_features.new_zeros(())
             else:
                 conditional_inv_mmd_loss = source_features.new_zeros(())
+
+            if lambda_conditional_proto > 0:
+                prototype_terms: list[torch.Tensor] = []
+                if conditional_target_scope in {"labeled_only", "labeled_accepted"}:
+                    prototype_terms.append(
+                        stage_prototype_alignment_loss(
+                            target_labeled_stage_features,
+                            target_labeled_stage_labels,
+                            stage_statistics,
+                        )
+                    )
+                if conditional_target_scope in {"accepted_only", "labeled_accepted"} and accepted_count > 0:
+                    target_unlabeled_selected = target_unlabeled_stage_features[accepted_mask]
+                    accepted_labels = pseudo_stage_labels[accepted_mask]
+                    accepted_thresholds = stage_statistics.thresholds[accepted_labels].clamp_min(1e-6)
+                    accepted_confidence = (1.0 - pseudo_distances[accepted_mask] / accepted_thresholds).clamp(min=0.0, max=1.0)
+                    prototype_terms.append(
+                        stage_prototype_alignment_loss(
+                            target_unlabeled_selected,
+                            accepted_labels,
+                            stage_statistics,
+                            sample_weights=accepted_confidence,
+                        )
+                    )
+                conditional_proto_loss = (
+                    torch.stack(prototype_terms).mean()
+                    if prototype_terms
+                    else source_features.new_zeros(())
+                )
+            else:
+                conditional_proto_loss = source_features.new_zeros(())
+
+            if lambda_conditional_proto_ce > 0:
+                prototype_ce_terms: list[torch.Tensor] = []
+                if conditional_target_scope in {"labeled_only", "labeled_accepted"}:
+                    prototype_ce_terms.append(
+                        stage_prototype_ce_loss(
+                            target_labeled_stage_features,
+                            target_labeled_stage_labels,
+                            stage_statistics,
+                        )
+                    )
+                if conditional_target_scope in {"accepted_only", "labeled_accepted"} and accepted_count > 0:
+                    accepted_labels = pseudo_stage_labels[accepted_mask]
+                    accepted_thresholds = stage_statistics.thresholds[accepted_labels].clamp_min(1e-6)
+                    accepted_confidence = (1.0 - pseudo_distances[accepted_mask] / accepted_thresholds).clamp(min=0.0, max=1.0)
+                    prototype_ce_terms.append(
+                        stage_prototype_ce_loss(
+                            target_unlabeled_stage_features[accepted_mask],
+                            accepted_labels,
+                            stage_statistics,
+                            sample_weights=accepted_confidence,
+                        )
+                    )
+                conditional_proto_ce_loss = (
+                    torch.stack(prototype_ce_terms).mean()
+                    if prototype_ce_terms
+                    else source_features.new_zeros(())
+                )
+            else:
+                conditional_proto_ce_loss = source_features.new_zeros(())
 
             if lambda_inv_spec_orth > 0:
                 inv_spec_orth_loss = (
@@ -680,7 +874,10 @@ def run_cd_pseudo_epoch(
                 + lambda_monotonic * monotonic_loss
                 + lambda_domain_adv * domain_adv_loss
                 + lambda_inv_mmd * inv_mmd_loss
+                + lambda_spec_domain * spec_domain_loss
                 + lambda_conditional_inv_mmd * conditional_inv_mmd_loss
+                + lambda_conditional_proto * conditional_proto_loss
+                + lambda_conditional_proto_ce * conditional_proto_ce_loss
                 + lambda_inv_spec_orth * inv_spec_orth_loss
                 + lambda_spec_residual * spec_residual_loss
                 + lambda_inv_aux * inv_aux_loss
@@ -710,7 +907,10 @@ def run_cd_pseudo_epoch(
             total_monotonic_loss += float(monotonic_loss.detach().cpu()) * batch_examples
             total_domain_adv_loss += float(domain_adv_loss.detach().cpu()) * batch_examples
             total_inv_mmd_loss += float(inv_mmd_loss.detach().cpu()) * batch_examples
+            total_spec_domain_loss += float(spec_domain_loss.detach().cpu()) * batch_examples
             total_conditional_inv_mmd_loss += float(conditional_inv_mmd_loss.detach().cpu()) * batch_examples
+            total_conditional_proto_loss += float(conditional_proto_loss.detach().cpu()) * batch_examples
+            total_conditional_proto_ce_loss += float(conditional_proto_ce_loss.detach().cpu()) * batch_examples
             total_inv_spec_orth_loss += float(inv_spec_orth_loss.detach().cpu()) * batch_examples
             total_spec_residual_loss += float(spec_residual_loss.detach().cpu()) * batch_examples
             total_inv_aux_loss += float(inv_aux_loss.detach().cpu()) * batch_examples
@@ -723,6 +923,8 @@ def run_cd_pseudo_epoch(
             total_source_domain_accuracy += float(domain_adv_stats["source_domain_accuracy"]) * batch_examples
             total_target_domain_accuracy += float(domain_adv_stats["target_domain_accuracy"]) * batch_examples
             total_gate_mean += float(source_outputs.get("gate_mean", source_features.new_zeros(())).detach().cpu()) * batch_examples
+            total_gate_dt_mean += float(source_outputs.get("gate_dt_mean", source_features.new_zeros(())).detach().cpu()) * batch_examples
+            total_gate_bc_mean += float(source_outputs.get("gate_bc_mean", source_features.new_zeros(())).detach().cpu()) * batch_examples
 
     if total_examples == 0:
         raise ValueError("No cross-domain batches were processed")
@@ -739,7 +941,10 @@ def run_cd_pseudo_epoch(
         "monotonic_loss": total_monotonic_loss / total_examples,
         "domain_adv_loss": total_domain_adv_loss / total_examples,
         "inv_mmd_loss": total_inv_mmd_loss / total_examples,
+        "spec_domain_loss": total_spec_domain_loss / total_examples,
         "conditional_inv_mmd_loss": total_conditional_inv_mmd_loss / total_examples,
+        "conditional_proto_loss": total_conditional_proto_loss / total_examples,
+        "conditional_proto_ce_loss": total_conditional_proto_ce_loss / total_examples,
         "inv_spec_orth_loss": total_inv_spec_orth_loss / total_examples,
         "spec_residual_loss": total_spec_residual_loss / total_examples,
         "inv_aux_loss": total_inv_aux_loss / total_examples,
@@ -756,6 +961,8 @@ def run_cd_pseudo_epoch(
         "source_domain_accuracy": total_source_domain_accuracy / total_examples,
         "target_domain_accuracy": total_target_domain_accuracy / total_examples,
         "gate_mean": total_gate_mean / total_examples,
+        "gate_dt_mean": total_gate_dt_mean / total_examples,
+        "gate_bc_mean": total_gate_bc_mean / total_examples,
     }
 
 
@@ -774,12 +981,15 @@ def fit_cd_pseudo_stage(
     stage_head = nn.Linear(model.head.in_features, args.num_pseudo_stages).to(device)
     effective_lambda_inv_mmd = resolve_inv_mmd_lambda(args)
     domain_discriminator = None
+    spec_domain_classifier = None
     if args.inv_alignment_mode == "grl" and args.lambda_domain_adv > 0:
         domain_discriminator = DomainDiscriminator(
             get_domain_feature_dim(model, args.domain_feature_tap),
             hidden_dim=args.domain_adv_hidden_dim,
             dropout=args.domain_adv_dropout,
         ).to(device)
+    if float(getattr(args, "lambda_spec_domain", 0.0)) > 0:
+        spec_domain_classifier = nn.Linear(model.head.in_features, 2).to(device)
     best_val_rmse = float("inf")
     best_epoch = -1
     history: list[dict[str, object]] = []
@@ -793,8 +1003,15 @@ def fit_cd_pseudo_stage(
         active_trainable_model_params,
         stage_head,
         domain_discriminator,
+        spec_domain_classifier,
         lr=float(args.target_lr),
         weight_decay=float(args.target_weight_decay),
+    )
+    scheduler = build_lr_scheduler(
+        optimizer,
+        scheduler_name=str(getattr(args, "target_lr_scheduler", "none")),
+        total_epochs=int(args.target_epochs),
+        min_lr=float(getattr(args, "target_lr_min", 1e-5)),
     )
     trainable_param_path = run_dir / "cd_stage" / "trainable_model_params.txt"
     trainable_param_path.write_text("\n".join(str(name) for name in freeze_info["trainable_param_names"]) + "\n", encoding="utf-8")
@@ -814,8 +1031,15 @@ def fit_cd_pseudo_stage(
                 active_trainable_model_params,
                 stage_head,
                 domain_discriminator,
+                spec_domain_classifier,
                 lr=float(args.target_lr),
                 weight_decay=float(args.target_weight_decay),
+            )
+            scheduler = build_lr_scheduler(
+                optimizer,
+                scheduler_name=str(getattr(args, "target_lr_scheduler", "none")),
+                total_epochs=max(int(args.target_epochs) - epoch + 1, 1),
+                min_lr=float(getattr(args, "target_lr_min", 1e-5)),
             )
             full_trainable_param_path.write_text(
                 "\n".join(name for name, param in model.named_parameters() if param.requires_grad) + "\n",
@@ -861,6 +1085,7 @@ def fit_cd_pseudo_stage(
             model,
             stage_head,
             domain_discriminator,
+            spec_domain_classifier,
             source_train_loader,
             target_loaders["labeled"],
             target_loaders["unlabeled"],
@@ -877,7 +1102,10 @@ def fit_cd_pseudo_stage(
             lambda_monotonic=args.lambda_monotonic,
             lambda_domain_adv=args.lambda_domain_adv,
             lambda_inv_mmd=effective_lambda_inv_mmd,
+            lambda_spec_domain=float(getattr(args, "lambda_spec_domain", 0.0)),
             lambda_conditional_inv_mmd=float(args.lambda_conditional_inv_mmd),
+            lambda_conditional_proto=float(args.lambda_conditional_proto),
+            lambda_conditional_proto_ce=float(args.lambda_conditional_proto_ce),
             lambda_inv_spec_orth=float(args.lambda_inv_spec_orth),
             lambda_spec_residual=float(args.lambda_spec_residual),
             lambda_inv_aux=float(args.lambda_inv_aux),
@@ -895,8 +1123,10 @@ def fit_cd_pseudo_stage(
             inv_alignment_mode=str(args.inv_alignment_mode),
             domain_feature_tap=str(args.domain_feature_tap),
             stage_feature_mode=str(args.stage_feature_mode),
+            conditional_target_scope=str(args.conditional_target_scope),
         )
         val_metrics = evaluate(model, target_loaders["val"], device, target_scale)
+        current_lr = float(optimizer.param_groups[0]["lr"])
         record = {
             "stage": "cd_spd_v0",
             "seed": seed,
@@ -911,7 +1141,10 @@ def fit_cd_pseudo_stage(
             "train_monotonic_loss": train_stats["monotonic_loss"],
             "train_domain_adv_loss": train_stats["domain_adv_loss"],
             "train_inv_mmd_loss": train_stats["inv_mmd_loss"],
+            "train_spec_domain_loss": train_stats["spec_domain_loss"],
             "train_conditional_inv_mmd_loss": train_stats["conditional_inv_mmd_loss"],
+            "train_conditional_proto_loss": train_stats["conditional_proto_loss"],
+            "train_conditional_proto_ce_loss": train_stats["conditional_proto_ce_loss"],
             "train_inv_spec_orth_loss": train_stats["inv_spec_orth_loss"],
             "train_spec_residual_loss": train_stats["spec_residual_loss"],
             "train_inv_aux_loss": train_stats["inv_aux_loss"],
@@ -926,9 +1159,13 @@ def fit_cd_pseudo_stage(
             "source_domain_accuracy": train_stats["source_domain_accuracy"],
             "target_domain_accuracy": train_stats["target_domain_accuracy"],
             "gate_mean": train_stats["gate_mean"],
+            "gate_dt_mean": train_stats["gate_dt_mean"],
+            "gate_bc_mean": train_stats["gate_bc_mean"],
             "grl_lambda": current_grl_lambda,
             "inv_alignment_mode": str(args.inv_alignment_mode),
             "active_adaptation_freeze_mode": active_freeze_mode,
+            "target_lr": current_lr,
+            "target_lr_scheduler": str(getattr(args, "target_lr_scheduler", "none")),
             "domain_feature_tap": str(args.domain_feature_tap),
             "val_rmse": val_metrics["rmse"],
             "val_mae": val_metrics["mae"],
@@ -940,7 +1177,11 @@ def fit_cd_pseudo_stage(
             "lambda_monotonic": args.lambda_monotonic,
             "lambda_domain_adv": args.lambda_domain_adv,
             "lambda_inv_mmd": effective_lambda_inv_mmd,
+            "lambda_spec_domain": float(getattr(args, "lambda_spec_domain", 0.0)),
             "lambda_conditional_inv_mmd": args.lambda_conditional_inv_mmd,
+            "lambda_conditional_proto": float(args.lambda_conditional_proto),
+            "lambda_conditional_proto_ce": float(args.lambda_conditional_proto_ce),
+            "conditional_target_scope": str(args.conditional_target_scope),
             "lambda_inv_spec_orth": args.lambda_inv_spec_orth,
             "lambda_spec_residual": args.lambda_spec_residual,
             "lambda_inv_aux": args.lambda_inv_aux,
@@ -956,18 +1197,23 @@ def fit_cd_pseudo_stage(
                     "model_state_dict": model.state_dict(),
                     "stage_head_state_dict": stage_head.state_dict(),
                     "domain_discriminator_state_dict": None if domain_discriminator is None else domain_discriminator.state_dict(),
+                    "spec_domain_classifier_state_dict": None if spec_domain_classifier is None else spec_domain_classifier.state_dict(),
                     "history": history,
                     "best_epoch": best_epoch,
                     "best_val_rmse": best_val_rmse,
                 },
                 ckpt_path,
             )
+        if scheduler is not None:
+            scheduler.step()
 
     checkpoint = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     stage_head.load_state_dict(checkpoint["stage_head_state_dict"])
     if domain_discriminator is not None and checkpoint["domain_discriminator_state_dict"] is not None:
         domain_discriminator.load_state_dict(checkpoint["domain_discriminator_state_dict"])
+    if spec_domain_classifier is not None and checkpoint.get("spec_domain_classifier_state_dict") is not None:
+        spec_domain_classifier.load_state_dict(checkpoint["spec_domain_classifier_state_dict"])
     best_record = history[best_epoch - 1] if best_epoch > 0 else None
     return {
         "best_epoch": best_epoch,
@@ -976,6 +1222,7 @@ def fit_cd_pseudo_stage(
         "history": history,
         "best_record": best_record,
         "uses_domain_adv": bool(domain_discriminator is not None),
+        "uses_spec_domain": bool(spec_domain_classifier is not None),
         "freeze_info": {
             **freeze_info,
             "trainable_param_path": str(trainable_param_path),
@@ -1030,20 +1277,25 @@ def train_one_seed(
     if args.lambda_monotonic > 0:
         target_monotonic_loader, monotonic_meta = build_target_monotonic_loader(args, target_train_full, target_partition)
 
-    cd_model = build_model(args, int(source_meta["train_windows_shape"][2])).to(device)
+    reuse_source_model_for_adaptation = bool(getattr(args, "reuse_source_model_for_adaptation", False))
     source_checkpoint = torch.load(source_stage["checkpoint"], map_location=device)
+    if reuse_source_model_for_adaptation:
+        cd_model = base_model
+    else:
+        cd_model = build_model(args, int(source_meta["train_windows_shape"][2])).to(device)
     semantic_warmup_history: list[dict[str, object]] = []
     semantic_warmup_info: dict[str, object] | None = None
-    if str(args.spd_predictor_mode) in {"decomposed_residual", "shared_aux_residual"}:
-        cd_model.load_state_dict(source_checkpoint["model_state_dict"], strict=False)
-        if getattr(cd_model, "inv_head", None) is not None and "head.weight" in source_checkpoint["model_state_dict"]:
-            with torch.no_grad():
-                cd_model.inv_head.weight.copy_(source_checkpoint["model_state_dict"]["head.weight"])
-                cd_model.inv_head.bias.copy_(source_checkpoint["model_state_dict"]["head.bias"])
-                nn.init.zeros_(cd_model.spec_head.weight)
-                nn.init.zeros_(cd_model.spec_head.bias)
-    else:
-        cd_model.load_state_dict(source_checkpoint["model_state_dict"])
+    if not reuse_source_model_for_adaptation:
+        if str(args.spd_predictor_mode) in {"decomposed_residual", "shared_aux_residual"}:
+            cd_model.load_state_dict(source_checkpoint["model_state_dict"], strict=False)
+            if getattr(cd_model, "inv_head", None) is not None and "head.weight" in source_checkpoint["model_state_dict"]:
+                with torch.no_grad():
+                    cd_model.inv_head.weight.copy_(source_checkpoint["model_state_dict"]["head.weight"])
+                    cd_model.inv_head.bias.copy_(source_checkpoint["model_state_dict"]["head.bias"])
+                    nn.init.zeros_(cd_model.spec_head.weight)
+                    nn.init.zeros_(cd_model.spec_head.bias)
+        else:
+            cd_model.load_state_dict(source_checkpoint["model_state_dict"])
 
     if str(args.spd_predictor_mode) == "shared_aux_residual" and int(args.semantic_warmup_epochs) > 0:
         semantic_warmup_params, semantic_warmup_freeze_info = configure_semantic_warmup_params(cd_model)
@@ -1155,7 +1407,10 @@ def train_one_seed(
             "lambda_monotonic": float(args.lambda_monotonic),
             "lambda_domain_adv": float(args.lambda_domain_adv),
             "lambda_inv_mmd": float(resolve_inv_mmd_lambda(args)),
+            "lambda_spec_domain": float(getattr(args, "lambda_spec_domain", 0.0)),
             "lambda_conditional_inv_mmd": float(args.lambda_conditional_inv_mmd),
+            "lambda_conditional_proto": float(args.lambda_conditional_proto),
+            "lambda_conditional_proto_ce": float(args.lambda_conditional_proto_ce),
             "lambda_inv_spec_orth": float(args.lambda_inv_spec_orth),
             "lambda_spec_residual": float(args.lambda_spec_residual),
             "lambda_inv_aux": float(args.lambda_inv_aux),
@@ -1165,7 +1420,12 @@ def train_one_seed(
             "semantic_warmup_lr": float(args.semantic_warmup_lr),
             "adaptation_freeze_mode": str(args.adaptation_freeze_mode),
             "adaptation_freeze_epochs": int(getattr(args, "adaptation_freeze_epochs", 0)),
+            "reuse_source_model_for_adaptation": bool(getattr(args, "reuse_source_model_for_adaptation", False)),
+            "target_lr": float(args.target_lr),
+            "target_lr_scheduler": str(getattr(args, "target_lr_scheduler", "none")),
+            "target_lr_min": float(getattr(args, "target_lr_min", 1e-5)),
             "stage_feature_mode": str(args.stage_feature_mode),
+            "conditional_target_scope": str(args.conditional_target_scope),
             "spd_predictor_mode": str(args.spd_predictor_mode),
             "domain_feature_tap": str(args.domain_feature_tap),
             "grl_lambda": float(args.grl_lambda),
@@ -1198,14 +1458,20 @@ def train_one_seed(
             "best_contrastive_valid_anchor_ratio": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"]["contrastive_valid_anchor_ratio"]),
             "best_domain_accuracy": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"]["domain_accuracy"]),
             "best_gate_mean": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("gate_mean", 0.0)),
+            "best_gate_dt_mean": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("gate_dt_mean", 0.0)),
+            "best_gate_bc_mean": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("gate_bc_mean", 0.0)),
             "best_inv_mmd_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_inv_mmd_loss", 0.0)),
+            "best_spec_domain_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_spec_domain_loss", 0.0)),
             "best_conditional_inv_mmd_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_conditional_inv_mmd_loss", 0.0)),
+            "best_conditional_proto_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_conditional_proto_loss", 0.0)),
+            "best_conditional_proto_ce_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_conditional_proto_ce_loss", 0.0)),
             "best_inv_spec_orth_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_inv_spec_orth_loss", 0.0)),
             "best_spec_residual_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_spec_residual_loss", 0.0)),
             "best_inv_aux_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_inv_aux_loss", 0.0)),
             "best_spec_reconstruction_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_spec_reconstruction_loss", 0.0)),
             "best_active_adaptation_freeze_mode": None if cd_stage["best_record"] is None else str(cd_stage["best_record"].get("active_adaptation_freeze_mode", "")),
             "uses_domain_adv": bool(cd_stage["uses_domain_adv"]),
+            "uses_spec_domain": bool(cd_stage.get("uses_spec_domain", False)),
             "uses_inv_mmd_alignment": bool(str(args.inv_alignment_mode) == "mmd" and resolve_inv_mmd_lambda(args) > 0),
         },
     }
@@ -1239,6 +1505,7 @@ def summarize_results(run_results: list[dict[str, object]], args: argparse.Names
         "lambda_monotonic": float(args.lambda_monotonic),
         "lambda_domain_adv": float(args.lambda_domain_adv),
         "lambda_inv_mmd": float(resolve_inv_mmd_lambda(args)),
+        "lambda_spec_domain": float(getattr(args, "lambda_spec_domain", 0.0)),
         "lambda_conditional_inv_mmd": float(args.lambda_conditional_inv_mmd),
         "lambda_inv_spec_orth": float(args.lambda_inv_spec_orth),
         "lambda_spec_residual": float(args.lambda_spec_residual),
@@ -1249,6 +1516,10 @@ def summarize_results(run_results: list[dict[str, object]], args: argparse.Names
         "semantic_warmup_lr": float(args.semantic_warmup_lr),
         "adaptation_freeze_mode": str(args.adaptation_freeze_mode),
         "adaptation_freeze_epochs": int(getattr(args, "adaptation_freeze_epochs", 0)),
+        "reuse_source_model_for_adaptation": bool(getattr(args, "reuse_source_model_for_adaptation", False)),
+        "target_lr": float(args.target_lr),
+        "target_lr_scheduler": str(getattr(args, "target_lr_scheduler", "none")),
+        "target_lr_min": float(getattr(args, "target_lr_min", 1e-5)),
         "stage_feature_mode": str(args.stage_feature_mode),
         "spd_predictor_mode": str(args.spd_predictor_mode),
         "domain_feature_tap": str(args.domain_feature_tap),
@@ -1297,7 +1568,7 @@ def main() -> None:
     parser.add_argument("--target-val-units", type=int, default=10, help="Number of target training engines reserved for validation")
     parser.add_argument("--few-shot-seed", type=int, default=42, help="Seed used to sample target few-shot partitions")
     parser.add_argument("--target-partition-path", default=None, help="Optional JSON path for a fixed target few-shot partition")
-    parser.add_argument("--resample-few-shot-per-seed", action="store_true", help="Resample the target few-shot partition for each run seed")
+    parser.add_argument("--resample-few-shot-per-seed", action=argparse.BooleanOptionalAction, default=True, help="Resample the target few-shot partition for each run seed (default: True to match v2 best-config protocol)")
     parser.add_argument("--seeds", default=None, help="Optional comma-separated seed list; overrides --num-runs")
     parser.add_argument("--num-runs", type=int, default=3, help="Number of run seeds when --seeds is not provided")
     parser.add_argument("--base-seed", type=int, default=42, help="First seed used when --seeds is not provided")
@@ -1306,6 +1577,8 @@ def main() -> None:
     parser.add_argument("--target-epochs", type=int, default=20, help="Cross-domain adaptation epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="Source-stage learning rate")
     parser.add_argument("--target-lr", type=float, default=5e-4, help="Adaptation-stage learning rate")
+    parser.add_argument("--target-lr-scheduler", choices=("none", "cosine"), default="none", help="Optional scheduler for the adaptation-stage optimizer")
+    parser.add_argument("--target-lr-min", type=float, default=1e-5, help="Minimum learning rate used by the adaptation-stage scheduler")
     parser.add_argument("--weight-decay", type=float, default=0.0, help="Source-stage weight decay")
     parser.add_argument("--target-weight-decay", type=float, default=0.0, help="Adaptation-stage weight decay")
     parser.add_argument("--source-loss-weight", type=float, default=1.0, help="Weight for source supervised loss during adaptation")
@@ -1319,7 +1592,16 @@ def main() -> None:
     parser.add_argument("--inv-alignment-mode", choices=("grl", "mmd", "none"), default="grl", help="Invariant-path alignment mode for SPD: gradient reversal, direct MMD, or disabled")
     parser.add_argument("--lambda-domain-adv", type=float, default=0.1, help="Weight for SPD invariant-path domain-adversarial loss")
     parser.add_argument("--lambda-inv-mmd", type=float, default=0.0, help="Weight for SPD invariant-path MMD alignment; when <= 0 and --inv-alignment-mode=mmd, reuse --lambda-domain-adv")
+    parser.add_argument("--lambda-spec-domain", type=float, default=0.0, help="Weight for encouraging the specific branch to be domain-predictive via a lightweight domain classifier")
     parser.add_argument("--lambda-conditional-inv-mmd", type=float, default=0.0, help="Weight for stage-conditional MMD on the invariant branch")
+    parser.add_argument("--lambda-conditional-proto", type=float, default=0.0, help="Weight for stage-prototype alignment on target invariant features")
+    parser.add_argument("--lambda-conditional-proto-ce", type=float, default=0.0, help="Weight for prototype-based stage classification on target conditional features without forcing centroid collapse")
+    parser.add_argument(
+        "--conditional-target-scope",
+        choices=("labeled_accepted", "labeled_only", "accepted_only"),
+        default="labeled_accepted",
+        help="Which target samples participate in stage-conditional invariant alignment",
+    )
     parser.add_argument("--lambda-inv-spec-orth", type=float, default=0.0, help="Weight for invariant/specific feature orthogonality regularization")
     parser.add_argument("--lambda-spec-residual", type=float, default=0.0, help="Weight for residual-size regularization on the specific prediction branch")
     parser.add_argument("--lambda-inv-aux", type=float, default=0.0, help="Weight for supervised invariant-branch RUL prediction")
@@ -1328,7 +1610,7 @@ def main() -> None:
     parser.add_argument("--semantic-warmup-lr", type=float, default=5e-4, help="Learning rate used during semantic warmup")
     parser.add_argument(
         "--adaptation-freeze-mode",
-        choices=("none", "head_only", "spec_gate_only", "spec_gate_head", "spec_gate_transformer_head"),
+        choices=("none", "head_only", "transformer_head", "spec_gate_only", "spec_gate_head", "spec_gate_transformer_head"),
         default="none",
         help="Freeze strategy for the SPD adaptation stage",
     )
@@ -1338,9 +1620,10 @@ def main() -> None:
         default=0,
         help="When > 0 and --adaptation-freeze-mode is not none, keep the requested freeze mode for this many adaptation epochs and then unfreeze the full model",
     )
+    parser.add_argument("--reuse-source-model-for-adaptation", action="store_true", help="Skip rebuilding/reloading a fresh model between source and adaptation stages and continue adapting the in-memory source-best model")
     parser.add_argument("--grl-lambda", type=float, default=1.0, help="Gradient-reversal strength used by the domain discriminator")
     parser.add_argument("--grl-warmup-epochs", type=int, default=5, help="Linearly warm up the GRL strength over this many adaptation epochs; 0 disables warmup")
-    parser.add_argument("--domain-feature-tap", choices=("inv_mean", "pre_transformer_last", "concat_inv_pre"), default="pre_transformer_last", help="Feature tap point used by the SPD invariant-alignment branch")
+    parser.add_argument("--domain-feature-tap", choices=("inv_mean", "pre_transformer_last", "frontend_mean", "concat_inv_pre"), default="pre_transformer_last", help="Feature tap point used by the SPD invariant-alignment branch")
     parser.add_argument("--domain-adv-hidden-dim", type=int, default=16, help="Hidden dimension of the SPD domain discriminator")
     parser.add_argument("--domain-adv-dropout", type=float, default=0.0, help="Dropout used inside the SPD domain discriminator")
     parser.add_argument("--stage-feature-mode", choices=("combined", "invariant"), default="combined", help="Feature branch used for stage statistics and stage classification")
@@ -1367,9 +1650,12 @@ def main() -> None:
     parser.add_argument("--transformer-inner-dropout", type=float, default=0.0, help="Dropout applied inside Transformer residual branches")
     parser.add_argument("--mamba-block-mode", choices=("bare", "prenorm_residual", "dd_spd"), default="dd_spd", help="Mamba block mode used in v3; dd_spd is the intended SPD setting")
     parser.add_argument("--spd-gate-init-bias", type=float, default=-2.0, help="Initial bias for the SPD specific-path gate")
+    parser.add_argument("--spd-scan-mode", choices=("mixed", "dual_state"), default="mixed", help="SPD scan mode: original parameter-mixing scan or dual-state isolated scan")
+    parser.add_argument("--spd-gate-mode", choices=("token", "window"), default="token", help="SPD gate mode: token-wise gate or window-level shared gate")
+    parser.add_argument("--spd-gate-scheme", choices=("shared", "dt_bc"), default="shared", help="SPD gate scheme: one shared gate or separate dt/bc gates")
     parser.add_argument("--spd-predictor-mode", choices=("shared_head", "decomposed_residual", "shared_aux_residual"), default="shared_head", help="Prediction head mode for SPD: original shared head, hard decomposed residual predictor, or shared-head-anchored auxiliary decomposition")
-    parser.add_argument("--source-val-all-windows", action="store_true", help="Validate source stage on all source validation windows")
-    parser.add_argument("--target-val-all-windows", action="store_true", help="Validate target adaptation stage on all target validation windows")
+    parser.add_argument("--source-val-all-windows", action=argparse.BooleanOptionalAction, default=True, help="Validate source stage on all source validation windows (default: True to match v2 best-config protocol)")
+    parser.add_argument("--target-val-all-windows", action=argparse.BooleanOptionalAction, default=True, help="Validate target adaptation stage on all target validation windows (default: True to match v2 best-config protocol)")
     parser.add_argument("--device", default="auto", help="auto, cuda, or cpu")
     parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers")
     parser.add_argument("--max-source-train-batches", type=int, default=None, help="Optional cap for source-stage smoke tests")

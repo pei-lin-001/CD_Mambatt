@@ -1,0 +1,63 @@
+{
+  "date": "2026-04-08",
+  "recipe": {
+    "name": "spd_highlr_frontend_lr15",
+    "base": "SPD + stage CE + feature MMD + spec-domain-predictive + cosine",
+    "frontend_inv_tap": true,
+    "target_lr": 0.0015,
+    "eta_min": 1e-05,
+    "target_epochs": 20
+  },
+  "tasks": {
+    "FD001_TO_FD003": {
+      "frontend_mean_rmse_mean": 20.015135891890584,
+      "frontend_mean_rmse_std": 0.7522847707507357,
+      "note": "new overall best so far"
+    },
+    "FD001_TO_FD004": {
+      "frontend_mean_rmse_mean": 23.47160137425929,
+      "frontend_mean_rmse_std": 1.6006048637416344,
+      "frontend_mean_per_seed": {
+        "42": 23.6176,
+        "43": 25.3548,
+        "44": 21.4423
+      },
+      "inv_mean_rmse_mean": 23.608791280417197,
+      "inv_mean_rmse_std": 1.7521374744258056,
+      "inv_mean_per_seed": {
+        "42": 23.6342,
+        "43": 25.7419,
+        "44": 21.4503
+      },
+      "previous_internal_best_mean": 23.72,
+      "previous_internal_best_std": 2.38,
+      "verdict": "frontend variant slightly better than inv, and slightly better than previous internal SPD best"
+    },
+    "FD003_TO_FD001": {
+      "frontend_mean_rmse_mean": 21.135237423244686,
+      "frontend_mean_rmse_std": 1.7493274322056074,
+      "frontend_mean_per_seed": {
+        "42": 20.4722,
+        "43": 19.4026,
+        "44": 23.5308
+      },
+      "inv_mean_rmse_mean": 21.262915440343797,
+      "inv_mean_rmse_std": 1.7944555166554639,
+      "inv_mean_per_seed": {
+        "42": 21.0633,
+        "43": 19.1718,
+        "44": 23.5536
+      },
+      "previous_internal_best_mean": 21.03,
+      "previous_internal_best_std": 1.7,
+      "v2_reference_mean": 19.81,
+      "verdict": "no breakthrough; frontend is slightly better than inv but still below prior best and below v2"
+    }
+  },
+  "logs": {
+    "FD001_TO_FD004_frontend": "/home/shelterpl/cd_mambatt/runs/logs/spd_highlr_frontend_fd001_to_fd004_lr15_20260408.log",
+    "FD001_TO_FD004_inv": "/home/shelterpl/cd_mambatt/runs/logs/spd_highlr_inv_fd001_to_fd004_lr15_20260408.log",
+    "FD003_TO_FD001_frontend": "/home/shelterpl/cd_mambatt/runs/logs/spd_highlr_frontend_fd003_to_fd001_lr15_20260408.log",
+    "FD003_TO_FD001_inv": "/home/shelterpl/cd_mambatt/runs/logs/spd_highlr_inv_fd003_to_fd001_lr15_20260408.log"
+  }
+}

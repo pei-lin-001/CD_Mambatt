@@ -1,0 +1,56 @@
+{
+  "date": "2026-04-08",
+  "experiment": "spd_highlr_frontend_3seed.py",
+  "task": "FD001_TO_FD003",
+  "protocol": {
+    "shots": 5,
+    "val_units": 10,
+    "source_split_seed": 42,
+    "resample_few_shot_per_seed": true,
+    "source_val_all_windows": true,
+    "target_val_all_windows": true
+  },
+  "model": {
+    "backbone": "dd_spd",
+    "losses": {
+      "source_mse": 1.0,
+      "target_mse": 1.0,
+      "global_mmd": 0.1,
+      "stage_ce": 1.0,
+      "frontend_inv_mmd": 0.1,
+      "spec_domain_predictive": 0.1
+    },
+    "optimizer": {
+      "type": "Adam",
+      "target_lr": 0.0015,
+      "scheduler": "CosineAnnealingLR",
+      "eta_min": 1e-05,
+      "target_epochs": 20
+    }
+  },
+  "per_seed": {
+    "42": {
+      "direct_rmse": 42.6474,
+      "adapted_rmse": 20.9774,
+      "best_epoch": 3
+    },
+    "43": {
+      "direct_rmse": 51.2006,
+      "adapted_rmse": 19.927,
+      "best_epoch": 1
+    },
+    "44": {
+      "direct_rmse": 35.9336,
+      "adapted_rmse": 19.141,
+      "best_epoch": 10
+    }
+  },
+  "aggregate": {
+    "mean_adapted_rmse": 20.015135891890584,
+    "std_adapted_rmse": 0.7522847707507357,
+    "previous_best_mean_rmse_reference": 20.37,
+    "improvement_vs_previous_best": -0.3548641081094154
+  },
+  "log_path": "/home/shelterpl/cd_mambatt/runs/logs/spd_highlr_frontend_3seed_lr15_20260408.log",
+  "run_root": "/home/shelterpl/cd_mambatt/runs/spd_highlr_frontend_3seed/FD001_TO_FD003"
+}
