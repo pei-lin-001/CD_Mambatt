@@ -154,6 +154,8 @@ class MambAttRegressor(nn.Module):
         spd_gate_mode: str = "token",
         spd_gate_scheme: str = "shared",
         spd_predictor_mode: str = "shared_head",
+        domain_conditioned_gate: bool = False,
+        frontend_adapter_mode: str = "none",
     ) -> None:
         super().__init__()
         if d_model % num_heads != 0:
@@ -210,6 +212,8 @@ class MambAttRegressor(nn.Module):
                         spd_scan_mode=spd_scan_mode,
                         spd_gate_mode=spd_gate_mode,
                         spd_gate_scheme=spd_gate_scheme,
+                        domain_conditioned_gate=domain_conditioned_gate,
+                        frontend_adapter_mode=frontend_adapter_mode,
                     )
                     for _ in range(num_mamba_layers)
                 ]
@@ -221,6 +225,7 @@ class MambAttRegressor(nn.Module):
         self.spd_gate_mode = spd_gate_mode
         self.spd_gate_scheme = spd_gate_scheme
         self.spd_predictor_mode = spd_predictor_mode
+        self.frontend_adapter_mode = frontend_adapter_mode
         if transformer_impl == "custom":
             self.transformer_blocks = nn.ModuleList(
                 [
@@ -264,6 +269,7 @@ class MambAttRegressor(nn.Module):
         x: torch.Tensor,
         *,
         return_aux: bool,
+        domain_label: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor] | None]:
         if x.device.type != "cuda":
             raise RuntimeError("MambAttRegressor requires CUDA because the installed Mamba kernels are GPU-only.")
@@ -272,7 +278,9 @@ class MambAttRegressor(nn.Module):
         last_block_aux: dict[str, torch.Tensor] | None = None
         for block in self.mamba_blocks:
             if return_aux and isinstance(block, DDMambaBlock):
-                hidden, last_block_aux = block(hidden, return_aux=True)
+                hidden, last_block_aux = block(hidden, return_aux=True, domain_label=domain_label)
+            elif isinstance(block, DDMambaBlock):
+                hidden = block(hidden, domain_label=domain_label)
             else:
                 hidden = block(hidden)
         return hidden, last_block_aux
@@ -287,8 +295,8 @@ class MambAttRegressor(nn.Module):
             hidden = self.transformer_encoder(hidden)
         return hidden[-1]
 
-    def _encode_internal(self, x: torch.Tensor, *, return_aux: bool) -> torch.Tensor | dict[str, torch.Tensor]:
-        hidden, last_block_aux = self._forward_mamba_sequence(x, return_aux=return_aux)
+    def _encode_internal(self, x: torch.Tensor, *, return_aux: bool, domain_label: torch.Tensor | None = None) -> torch.Tensor | dict[str, torch.Tensor]:
+        hidden, last_block_aux = self._forward_mamba_sequence(x, return_aux=return_aux, domain_label=domain_label)
         pre_transformer_hidden = hidden
         features = self._decode_sequence(pre_transformer_hidden)
         if not return_aux:
@@ -317,18 +325,18 @@ class MambAttRegressor(nn.Module):
                 outputs["gate_bc_mean"] = last_block_aux["gate_bc_mean"]
         return outputs
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
-        return self._encode_internal(x, return_aux=False)
+    def encode(self, x: torch.Tensor, *, domain_label: torch.Tensor | None = None) -> torch.Tensor:
+        return self._encode_internal(x, return_aux=False, domain_label=domain_label)
 
-    def forward_mamba_sequence(self, x: torch.Tensor) -> torch.Tensor:
-        hidden, _ = self._forward_mamba_sequence(x, return_aux=False)
+    def forward_mamba_sequence(self, x: torch.Tensor, *, domain_label: torch.Tensor | None = None) -> torch.Tensor:
+        hidden, _ = self._forward_mamba_sequence(x, return_aux=False, domain_label=domain_label)
         return hidden
 
-    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
-        return self.encode(x)
+    def forward_features(self, x: torch.Tensor, *, domain_label: torch.Tensor | None = None) -> torch.Tensor:
+        return self.encode(x, domain_label=domain_label)
 
-    def forward_features_with_aux(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
-        outputs = self._encode_internal(x, return_aux=True)
+    def forward_features_with_aux(self, x: torch.Tensor, *, domain_label: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
+        outputs = self._encode_internal(x, return_aux=True, domain_label=domain_label)
         if not isinstance(outputs, dict):
             raise TypeError("forward_features_with_aux expected a dictionary of tensors")
         return outputs
@@ -368,12 +376,12 @@ class MambAttRegressor(nn.Module):
             "prediction_decomposed": prediction_decomposed,
         }
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, *, domain_label: torch.Tensor | None = None) -> torch.Tensor:
         if self.inv_head is not None and self.spec_head is not None:
-            outputs = self.forward_features_with_aux(x)
+            outputs = self.forward_features_with_aux(x, domain_label=domain_label)
             predictions = self.predict_from_output_dict(outputs)
             return predictions["prediction"]
-        features = self.forward_features(x)
+        features = self.forward_features(x, domain_label=domain_label)
         return self.predict_from_features(features)
 
     @staticmethod

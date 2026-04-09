@@ -36,6 +36,8 @@ class DDMambaBlock(nn.Module):
         spd_scan_mode: str = "mixed",
         spd_gate_mode: str = "token",
         spd_gate_scheme: str = "shared",
+        domain_conditioned_gate: bool = False,
+        frontend_adapter_mode: str = "none",
     ) -> None:
         super().__init__()
         if spd_scan_mode not in {"mixed", "dual_state"}:
@@ -44,6 +46,8 @@ class DDMambaBlock(nn.Module):
             raise ValueError("spd_gate_mode must be 'token' or 'window'")
         if spd_gate_scheme not in {"shared", "dt_bc"}:
             raise ValueError("spd_gate_scheme must be 'shared' or 'dt_bc'")
+        if frontend_adapter_mode not in {"none", "target_affine", "target_residual"}:
+            raise ValueError("frontend_adapter_mode must be 'none', 'target_affine', or 'target_residual'")
         base = Mamba(
             d_model=d_model,
             d_state=d_state,
@@ -61,6 +65,8 @@ class DDMambaBlock(nn.Module):
         self.spd_scan_mode = spd_scan_mode
         self.spd_gate_mode = spd_gate_mode
         self.spd_gate_scheme = spd_gate_scheme
+        self.domain_conditioned_gate = domain_conditioned_gate
+        self.frontend_adapter_mode = frontend_adapter_mode
 
         self.in_proj = base.in_proj
         self.conv1d = base.conv1d
@@ -100,6 +106,34 @@ class DDMambaBlock(nn.Module):
             nn.init.zeros_(self.gate_proj_bc.weight)
             nn.init.constant_(self.gate_proj_bc.bias, spd_gate_init_bias)
 
+        if self.domain_conditioned_gate:
+            self.domain_gate_shift = nn.Parameter(torch.zeros(1))
+            if self.spd_gate_scheme == "dt_bc":
+                self.domain_gate_shift_dt = nn.Parameter(torch.zeros(1))
+                self.domain_gate_shift_bc = nn.Parameter(torch.zeros(1))
+            else:
+                self.domain_gate_shift_dt = None
+                self.domain_gate_shift_bc = None
+        else:
+            self.domain_gate_shift = None
+            self.domain_gate_shift_dt = None
+            self.domain_gate_shift_bc = None
+
+        if self.frontend_adapter_mode == "target_affine":
+            self.frontend_target_scale = nn.Parameter(torch.zeros(self.d_inner))
+            self.frontend_target_bias = nn.Parameter(torch.zeros(self.d_inner))
+            self.frontend_target_adapter = None
+        elif self.frontend_adapter_mode == "target_residual":
+            self.frontend_target_scale = None
+            self.frontend_target_bias = None
+            self.frontend_target_adapter = nn.Conv1d(self.d_inner, self.d_inner, kernel_size=1, bias=True)
+            nn.init.zeros_(self.frontend_target_adapter.weight)
+            nn.init.zeros_(self.frontend_target_adapter.bias)
+        else:
+            self.frontend_target_scale = None
+            self.frontend_target_bias = None
+            self.frontend_target_adapter = None
+
     def _compute_gate(
         self,
         x: torch.Tensor,
@@ -107,36 +141,72 @@ class DDMambaBlock(nn.Module):
         *,
         batch: int,
         seqlen: int,
+        domain_shift: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         x_flat = rearrange(x, "b d l -> (b l) d")
         if self.spd_gate_mode == "window":
             x_window = x.mean(dim=2)
-            gate = torch.sigmoid(proj(x_window)).unsqueeze(1).expand(-1, seqlen, -1)
+            pre_gate = proj(x_window)
+            if domain_shift is not None:
+                pre_gate = pre_gate + domain_shift
+            gate = torch.sigmoid(pre_gate).unsqueeze(1).expand(-1, seqlen, -1)
             gate_flat = rearrange(gate, "b l 1 -> (b l) 1")
         else:
-            gate_flat = torch.sigmoid(proj(x_flat))
+            pre_gate = proj(x_flat)
+            if domain_shift is not None:
+                if domain_shift.shape[0] == 1:
+                    shift_expanded = domain_shift.expand(batch * seqlen, -1)
+                else:
+                    shift_expanded = domain_shift.repeat_interleave(seqlen, dim=0)
+                pre_gate = pre_gate + shift_expanded
+            gate_flat = torch.sigmoid(pre_gate)
             gate = rearrange(gate_flat, "(b l) 1 -> b l 1", b=batch, l=seqlen)
         return gate, gate_flat
 
     def _project_selectivity(
         self,
-        x: torch.Tensor,
+        x_inv: torch.Tensor,
+        x_spec: torch.Tensor,
         *,
         batch: int,
         seqlen: int,
+        domain_label: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        x_flat = rearrange(x, "b d l -> (b l) d")
+        x_gate = x_spec
+        x_inv_flat = rearrange(x_inv, "b d l -> (b l) d")
+        x_spec_flat = rearrange(x_spec, "b d l -> (b l) d")
+
+        shift_dt: torch.Tensor | None = None
+        shift_bc: torch.Tensor | None = None
+        if self.domain_conditioned_gate and domain_label is not None:
+            unique_labels = domain_label.unique()
+            if unique_labels.numel() == 1:
+                flag = unique_labels[0].float()
+                if self.spd_gate_scheme == "dt_bc" and self.domain_gate_shift_dt is not None:
+                    shift_dt = (self.domain_gate_shift_dt * flag).unsqueeze(0)
+                    shift_bc = (self.domain_gate_shift_bc * flag).unsqueeze(0)
+                else:
+                    shift_dt = (self.domain_gate_shift * flag).unsqueeze(0)
+                    shift_bc = shift_dt
+            else:
+                if self.spd_gate_scheme == "dt_bc" and self.domain_gate_shift_dt is not None:
+                    shift_dt = (self.domain_gate_shift_dt * domain_label.float()).unsqueeze(1)
+                    shift_bc = (self.domain_gate_shift_bc * domain_label.float()).unsqueeze(1)
+                else:
+                    per_sample = self.domain_gate_shift * domain_label.float()
+                    shift_dt = per_sample.unsqueeze(1)
+                    shift_bc = shift_dt
 
         if self.spd_gate_scheme == "shared":
-            gate_dt, gate_dt_flat = self._compute_gate(x, self.gate_proj, batch=batch, seqlen=seqlen)
+            gate_dt, gate_dt_flat = self._compute_gate(x_gate, self.gate_proj, batch=batch, seqlen=seqlen, domain_shift=shift_dt)
             gate_bc, gate_bc_flat = gate_dt, gate_dt_flat
         else:
-            gate_dt, gate_dt_flat = self._compute_gate(x, self.gate_proj_dt, batch=batch, seqlen=seqlen)
-            gate_bc, gate_bc_flat = self._compute_gate(x, self.gate_proj_bc, batch=batch, seqlen=seqlen)
+            gate_dt, gate_dt_flat = self._compute_gate(x_gate, self.gate_proj_dt, batch=batch, seqlen=seqlen, domain_shift=shift_dt)
+            gate_bc, gate_bc_flat = self._compute_gate(x_gate, self.gate_proj_bc, batch=batch, seqlen=seqlen, domain_shift=shift_bc)
         gate = 0.5 * (gate_dt + gate_bc)
 
-        inv_proj = self.x_proj_inv(x_flat)
-        spec_proj = self.x_proj_spec(x_flat)
+        inv_proj = self.x_proj_inv(x_inv_flat)
+        spec_proj = self.x_proj_spec(x_spec_flat)
         dt_inv_raw, B_inv_raw, C_inv_raw = torch.split(
             inv_proj,
             [self.dt_rank, self.d_state, self.d_state],
@@ -172,6 +242,22 @@ class DDMambaBlock(nn.Module):
             "B_combined": rearrange(B_combined_raw, "(b l) n -> b n l", b=batch, l=seqlen).contiguous(),
             "C_combined": rearrange(C_combined_raw, "(b l) n -> b n l", b=batch, l=seqlen).contiguous(),
         }
+
+    def _apply_frontend_adapter(
+        self,
+        x: torch.Tensor,
+        domain_label: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if self.frontend_adapter_mode == "none" or domain_label is None:
+            return x
+        domain_mask = domain_label.float().view(-1, 1, 1)
+        if self.frontend_adapter_mode == "target_affine":
+            scale = self.frontend_target_scale.view(1, -1, 1)
+            bias = self.frontend_target_bias.view(1, -1, 1)
+            return x * (1.0 + domain_mask * scale) + domain_mask * bias
+        if self.frontend_target_adapter is None:
+            return x
+        return x + domain_mask * self.frontend_target_adapter(x)
 
     def _run_selective_scan_core(
         self,
@@ -241,6 +327,7 @@ class DDMambaBlock(nn.Module):
         hidden_states: torch.Tensor,
         *,
         return_aux: bool = False,
+        domain_label: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
         batch, seqlen, _ = hidden_states.shape
 
@@ -253,19 +340,26 @@ class DDMambaBlock(nn.Module):
             xz = xz + rearrange(self.in_proj.bias.to(dtype=xz.dtype), "d -> d 1")
 
         x, z = xz.chunk(2, dim=1)
-        x = self.act(self.conv1d(x)[..., :seqlen])
+        x_shared = self.act(self.conv1d(x)[..., :seqlen])
+        x_combined = self._apply_frontend_adapter(x_shared, domain_label)
 
-        selectivity = self._project_selectivity(x, batch=batch, seqlen=seqlen)
+        selectivity = self._project_selectivity(
+            x_shared,
+            x_combined,
+            batch=batch,
+            seqlen=seqlen,
+            domain_label=domain_label,
+        )
         if self.spd_scan_mode == "dual_state":
             invariant_core = self._run_selective_scan_core(
-                x,
+                x_shared,
                 selectivity["dt_inv"],
                 selectivity["B_inv"],
                 selectivity["C_inv"],
             )
             if self.spd_gate_scheme == "dt_bc":
                 specific_core = self._run_selective_scan_core(
-                    x,
+                    x_combined,
                     selectivity["gate_dt_scan"] * selectivity["dt_spec"],
                     selectivity["gate_bc_scan"] * selectivity["B_spec"],
                     selectivity["gate_bc_scan"] * selectivity["C_spec"],
@@ -273,25 +367,25 @@ class DDMambaBlock(nn.Module):
                 combined_core = invariant_core + specific_core
             else:
                 specific_core = self._run_selective_scan_core(
-                    x,
+                    x_combined,
                     selectivity["dt_spec"],
                     selectivity["B_spec"],
                     selectivity["C_spec"],
                 )
                 combined_core = invariant_core + selectivity["gate_scan"] * specific_core
-            combined_out = self._finalize_scan_output(combined_core, x, z)
-            invariant_out = self._finalize_scan_output(invariant_core, x, z)
-            specific_out = self._finalize_scan_output(specific_core, x, z)
+            combined_out = self._finalize_scan_output(combined_core, x_combined, z)
+            invariant_out = self._finalize_scan_output(invariant_core, x_shared, z)
+            specific_out = self._finalize_scan_output(specific_core, x_combined, z)
         else:
             combined_out = self._run_selective_scan(
-                x,
+                x_combined,
                 z,
                 selectivity["dt_combined"],
                 selectivity["B_combined"],
                 selectivity["C_combined"],
             )
             invariant_out = self._run_selective_scan(
-                x,
+                x_shared,
                 z,
                 selectivity["dt_inv"],
                 selectivity["B_inv"],
@@ -310,7 +404,8 @@ class DDMambaBlock(nn.Module):
             "gate_dt_mean": selectivity["gate_dt"].mean(),
             "gate_bc_sequence": selectivity["gate_bc"],
             "gate_bc_mean": selectivity["gate_bc"].mean(),
-            "conv_sequence": rearrange(x, "b d l -> b l d"),
+            "conv_sequence": rearrange(x_shared, "b d l -> b l d"),
+            "combined_conv_sequence": rearrange(x_combined, "b d l -> b l d"),
         }
         if specific_out is not None:
             aux["spec_sequence"] = specific_out

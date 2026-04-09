@@ -98,21 +98,49 @@ def run_epoch(
     return total_loss / total_items
 
 
-def predict(model: nn.Module, loader: DataLoader, device: torch.device, target_scale: float) -> tuple[np.ndarray, np.ndarray]:
+def predict(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    target_scale: float,
+    *,
+    domain_label_value: int | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     model.eval()
     preds: list[np.ndarray] = []
     tgts: list[np.ndarray] = []
     with torch.no_grad():
         for windows, targets in loader:
             windows = windows.to(device, non_blocking=True)
-            outputs = (model(windows) * target_scale).detach().cpu().numpy()
+            domain_label = None
+            if domain_label_value is not None:
+                domain_label = torch.full(
+                    (windows.shape[0],),
+                    int(domain_label_value),
+                    dtype=torch.long,
+                    device=device,
+                )
+            outputs = (model(windows, domain_label=domain_label) * target_scale).detach().cpu().numpy()
             preds.append(outputs.astype(np.float32))
             tgts.append(targets.numpy().astype(np.float32))
     return np.concatenate(preds), np.concatenate(tgts)
 
 
-def evaluate(model: nn.Module, loader: DataLoader, device: torch.device, target_scale: float) -> dict[str, float]:
-    predictions, targets = predict(model, loader, device, target_scale)
+def evaluate(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    target_scale: float,
+    *,
+    domain_label_value: int | None = None,
+) -> dict[str, float]:
+    predictions, targets = predict(
+        model,
+        loader,
+        device,
+        target_scale,
+        domain_label_value=domain_label_value,
+    )
     return {
         "rmse": rmse(predictions, targets),
         "mae": mae(predictions, targets),
@@ -220,6 +248,8 @@ def build_model(args: argparse.Namespace, input_dim: int) -> MambAttRegressor:
         spd_gate_mode=str(getattr(args, "spd_gate_mode", "token")),
         spd_gate_scheme=str(getattr(args, "spd_gate_scheme", "shared")),
         spd_predictor_mode=str(getattr(args, "spd_predictor_mode", "shared_head")),
+        domain_conditioned_gate=bool(getattr(args, "domain_conditioned_gate", False)),
+        frontend_adapter_mode=str(getattr(args, "frontend_adapter_mode", "none")),
     )
 
 
@@ -348,6 +378,8 @@ def main() -> None:
     parser.add_argument("--spd-scan-mode", choices=("mixed", "dual_state"), default="mixed", help="SPD scan mode: original parameter-mixing scan or dual-state isolated scan")
     parser.add_argument("--spd-gate-mode", choices=("token", "window"), default="token", help="SPD gate mode: token-wise gate or window-level shared gate")
     parser.add_argument("--spd-gate-scheme", choices=("shared", "dt_bc"), default="shared", help="SPD gate scheme: one shared gate or separate dt/bc gates")
+    parser.add_argument("--domain-conditioned-gate", action="store_true", help="Enable domain-conditioned scalar gate shift inside DD-Mamba")
+    parser.add_argument("--frontend-adapter-mode", choices=("none", "target_affine", "target_residual"), default="none", help="Optional domain-conditioned frontend adapter inserted after conv1d inside DD-Mamba")
     parser.add_argument("--val-all-windows", action="store_true", help="Validate on all sliding windows instead of only the last window per validation engine")
     parser.add_argument("--device", default="auto", help="auto, cuda, or cpu")
     parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers")

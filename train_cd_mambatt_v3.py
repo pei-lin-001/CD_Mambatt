@@ -49,15 +49,22 @@ def endless_loader(loader: DataLoader):
             yield batch
 
 
-def model_forward_with_aux(model: nn.Module, windows: torch.Tensor) -> dict[str, torch.Tensor]:
+def uses_domain_conditioning(model: nn.Module) -> bool:
+    return hasattr(model, "mamba_blocks") and any(
+        getattr(block, "domain_conditioned_gate", False) or getattr(block, "frontend_adapter_mode", "none") != "none"
+        for block in model.mamba_blocks
+    )
+
+
+def model_forward_with_aux(model: nn.Module, windows: torch.Tensor, *, domain_label: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
     if hasattr(model, "forward_features_with_aux"):
-        outputs = model.forward_features_with_aux(windows)
+        outputs = model.forward_features_with_aux(windows, domain_label=domain_label)
         if isinstance(outputs, dict):
             if hasattr(model, "predict_from_output_dict"):
                 prediction_dict = model.predict_from_output_dict(outputs)
                 outputs = {**outputs, **prediction_dict}
             return outputs
-    features = model.forward_features(windows)
+    features = model.forward_features(windows, domain_label=domain_label)
     return {
         "features": features,
         "domain_features": features,
@@ -315,6 +322,7 @@ def run_semantic_warmup_epoch(
     is_train = optimizer is not None
     model.train(is_train)
     mse_loss = nn.MSELoss()
+    use_dcg_warmup = uses_domain_conditioning(model)
     total_examples = 0
     total_loss_value = 0.0
     total_inv_aux_loss = 0.0
@@ -328,7 +336,8 @@ def run_semantic_warmup_epoch(
                 break
             windows = windows.to(device, non_blocking=True)
             targets = targets_raw.to(device, non_blocking=True) / target_scale
-            outputs = model_forward_with_aux(model, windows)
+            src_domain = torch.zeros(windows.shape[0], dtype=torch.long, device=device) if use_dcg_warmup else None
+            outputs = model_forward_with_aux(model, windows, domain_label=src_domain)
 
             if lambda_inv_aux > 0:
                 inv_aux_loss = mse_loss(outputs["prediction_inv"], targets)
@@ -425,6 +434,7 @@ def collect_source_stage_statistics(
     stage_feature_mode: str,
 ) -> SourceStageStatistics:
     model.eval()
+    use_dcg_stats = uses_domain_conditioning(model)
     feature_batches: list[torch.Tensor] = []
     label_batches: list[torch.Tensor] = []
     rul_batches: list[torch.Tensor] = []
@@ -432,7 +442,8 @@ def collect_source_stage_statistics(
     with torch.no_grad():
         for windows, targets in source_loader:
             windows = windows.to(device, non_blocking=True)
-            outputs = model_forward_with_aux(model, windows)
+            src_domain = torch.zeros(windows.shape[0], dtype=torch.long, device=device) if use_dcg_stats else None
+            outputs = model_forward_with_aux(model, windows, domain_label=src_domain)
             features = select_stage_features(outputs, stage_feature_mode).detach().cpu()
             rul_values = targets.detach().cpu()
             stage_labels = assign_rul_stage_labels(rul_values, rul_clip=rul_clip, num_stages=num_stages).cpu()
@@ -613,7 +624,13 @@ def run_cd_pseudo_epoch(
             target_labeled_targets = target_labeled_targets_raw / target_scale
             target_unlabeled_windows = target_unlabeled_windows.to(device, non_blocking=True)
 
-            source_outputs = model_forward_with_aux(model, source_windows)
+            use_dcg = uses_domain_conditioning(model)
+            source_domain = torch.zeros(source_windows.shape[0], dtype=torch.long, device=device) if use_dcg else None
+            target_labeled_domain = torch.ones(target_labeled_windows.shape[0], dtype=torch.long, device=device) if use_dcg else None
+            target_unlabeled_domain = torch.ones(target_unlabeled_windows.shape[0], dtype=torch.long, device=device) if use_dcg else None
+            monotonic_domain = torch.ones(monotonic_earlier_windows.shape[0], dtype=torch.long, device=device) if use_dcg and monotonic_earlier_windows is not None else None
+
+            source_outputs = model_forward_with_aux(model, source_windows, domain_label=source_domain)
             source_features = source_outputs["features"]
             source_stage_features = select_stage_features(source_outputs, stage_feature_mode)
             source_predictions = source_outputs["prediction"]
@@ -627,7 +644,7 @@ def run_cd_pseudo_epoch(
             source_stage_logits = stage_head(source_stage_features)
             source_stage_loss = ce_loss(source_stage_logits, source_stage_labels)
 
-            target_labeled_outputs = model_forward_with_aux(model, target_labeled_windows)
+            target_labeled_outputs = model_forward_with_aux(model, target_labeled_windows, domain_label=target_labeled_domain)
             target_labeled_features = target_labeled_outputs["features"]
             target_labeled_stage_features = select_stage_features(target_labeled_outputs, stage_feature_mode)
             target_predictions = target_labeled_outputs["prediction"]
@@ -638,7 +655,7 @@ def run_cd_pseudo_epoch(
                 num_stages=num_pseudo_stages,
             )
 
-            target_unlabeled_outputs = model_forward_with_aux(model, target_unlabeled_windows)
+            target_unlabeled_outputs = model_forward_with_aux(model, target_unlabeled_windows, domain_label=target_unlabeled_domain)
             target_unlabeled_features = target_unlabeled_outputs["features"]
             target_unlabeled_stage_features = select_stage_features(target_unlabeled_outputs, stage_feature_mode)
             target_global_alignment_features = torch.cat([target_labeled_features, target_unlabeled_features], dim=0)
@@ -674,8 +691,8 @@ def run_cd_pseudo_epoch(
             )
 
             if monotonic_earlier_windows is not None and monotonic_later_windows is not None:
-                earlier_predictions = model(monotonic_earlier_windows)
-                later_predictions = model(monotonic_later_windows)
+                earlier_predictions = model(monotonic_earlier_windows, domain_label=monotonic_domain)
+                later_predictions = model(monotonic_later_windows, domain_label=monotonic_domain)
                 monotonic_loss = local_monotonicity_loss(
                     earlier_predictions,
                     later_predictions,
@@ -1125,7 +1142,13 @@ def fit_cd_pseudo_stage(
             stage_feature_mode=str(args.stage_feature_mode),
             conditional_target_scope=str(args.conditional_target_scope),
         )
-        val_metrics = evaluate(model, target_loaders["val"], device, target_scale)
+        val_metrics = evaluate(
+            model,
+            target_loaders["val"],
+            device,
+            target_scale,
+            domain_label_value=1 if uses_domain_conditioning(model) else None,
+        )
         current_lr = float(optimizer.param_groups[0]["lr"])
         record = {
             "stage": "cd_spd_v0",
@@ -1261,9 +1284,21 @@ def train_one_seed(
 
     base_model = build_model(source_model_args, int(source_meta["train_windows_shape"][2])).to(device)
     source_stage = fit_source_stage(args, seed, base_model, source_loaders, device, run_dir, target_scale, grad_clip_norm)
-    source_test_metrics = evaluate(base_model, source_loaders["test"], device, target_scale)
+    source_test_metrics = evaluate(
+        base_model,
+        source_loaders["test"],
+        device,
+        target_scale,
+        domain_label_value=0 if uses_domain_conditioning(base_model) else None,
+    )
     target_direct_loader, target_direct_meta = build_target_direct_test_loader(args, target_train_full, target_test_raw)
-    target_direct_metrics = evaluate(base_model, target_direct_loader, device, target_scale)
+    target_direct_metrics = evaluate(
+        base_model,
+        target_direct_loader,
+        device,
+        target_scale,
+        domain_label_value=1 if uses_domain_conditioning(base_model) else None,
+    )
 
     target_partition = load_or_create_target_partition(args, target_train_full, task_output_dir, seed)
     target_loaders, target_meta = build_target_cd_data(args, target_train_full, target_test_raw, target_partition)
@@ -1350,7 +1385,13 @@ def train_one_seed(
         target_scale,
         grad_clip_norm,
     )
-    cd_target_test_metrics = evaluate(cd_model, target_loaders["test"], device, target_scale)
+    cd_target_test_metrics = evaluate(
+        cd_model,
+        target_loaders["test"],
+        device,
+        target_scale,
+        domain_label_value=1 if uses_domain_conditioning(cd_model) else None,
+    )
 
     result = {
         "seed": seed,
@@ -1427,6 +1468,8 @@ def train_one_seed(
             "stage_feature_mode": str(args.stage_feature_mode),
             "conditional_target_scope": str(args.conditional_target_scope),
             "spd_predictor_mode": str(args.spd_predictor_mode),
+            "domain_conditioned_gate": bool(getattr(args, "domain_conditioned_gate", False)),
+            "frontend_adapter_mode": str(getattr(args, "frontend_adapter_mode", "none")),
             "domain_feature_tap": str(args.domain_feature_tap),
             "grl_lambda": float(args.grl_lambda),
             "grl_warmup_epochs": int(args.grl_warmup_epochs),
@@ -1522,6 +1565,8 @@ def summarize_results(run_results: list[dict[str, object]], args: argparse.Names
         "target_lr_min": float(getattr(args, "target_lr_min", 1e-5)),
         "stage_feature_mode": str(args.stage_feature_mode),
         "spd_predictor_mode": str(args.spd_predictor_mode),
+        "domain_conditioned_gate": bool(getattr(args, "domain_conditioned_gate", False)),
+        "frontend_adapter_mode": str(getattr(args, "frontend_adapter_mode", "none")),
         "domain_feature_tap": str(args.domain_feature_tap),
         "grl_lambda": float(args.grl_lambda),
         "grl_warmup_epochs": int(args.grl_warmup_epochs),
@@ -1654,6 +1699,8 @@ def main() -> None:
     parser.add_argument("--spd-gate-mode", choices=("token", "window"), default="token", help="SPD gate mode: token-wise gate or window-level shared gate")
     parser.add_argument("--spd-gate-scheme", choices=("shared", "dt_bc"), default="shared", help="SPD gate scheme: one shared gate or separate dt/bc gates")
     parser.add_argument("--spd-predictor-mode", choices=("shared_head", "decomposed_residual", "shared_aux_residual"), default="shared_head", help="Prediction head mode for SPD: original shared head, hard decomposed residual predictor, or shared-head-anchored auxiliary decomposition")
+    parser.add_argument("--domain-conditioned-gate", action="store_true", help="Enable domain-conditioned gate: add a learnable shift to the SPD gate based on domain label (0=source, 1=target)")
+    parser.add_argument("--frontend-adapter-mode", choices=("none", "target_affine", "target_residual"), default="none", help="Optional target-conditioned frontend adapter inserted after conv1d inside DD-Mamba")
     parser.add_argument("--source-val-all-windows", action=argparse.BooleanOptionalAction, default=True, help="Validate source stage on all source validation windows (default: True to match v2 best-config protocol)")
     parser.add_argument("--target-val-all-windows", action=argparse.BooleanOptionalAction, default=True, help="Validate target adaptation stage on all target validation windows (default: True to match v2 best-config protocol)")
     parser.add_argument("--device", default="auto", help="auto, cuda, or cpu")
