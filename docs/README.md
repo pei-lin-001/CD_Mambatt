@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last updated: `2026-04-08`
+Last updated: `2026-04-11`
 
 This directory has been cleaned and merged into a smaller set of primary documents.
 Historical experiment notes were **not deleted**; they were moved into `docs/history/`.
@@ -9,6 +9,7 @@ Historical experiment notes were **not deleted**; they were moved into `docs/his
 
 | File | Purpose |
 |---|---|
+| [`stage_report_for_advisor_zh_2026-04-11.md`](./stage_report_for_advisor_zh_2026-04-11.md) | Detailed Chinese stage report prepared for advisor briefing, including objectives, method evolution, key results, diagnostics, literature comparison, bottlenecks, and next steps |
 | [`project_overview_zh_2026-04-08.md`](./project_overview_zh_2026-04-08.md) | Chinese project overview for quickly understanding the current code, results, bottlenecks, and next priorities |
 | [`project_status.md`](./project_status.md) | Current project snapshot, key results, fairness judgment, and next priorities |
 | [`supervised_reproduction.md`](./supervised_reproduction.md) | Consolidated target-paper supervised reproduction status |
@@ -39,8 +40,9 @@ Historical experiment notes were **not deleted**; they were moved into `docs/his
 ## Recommended reading order
 
 1. `project_status.md`
-2. `supervised_reproduction.md`
-3. `self_supervised_reproduction.md`
-4. `published_baselines.md`
-5. `dd_ssm_roadmap.md`
-6. `cross_domain_experiment_log.md`
+2. `stage_report_for_advisor_zh_2026-04-11.md`
+3. `supervised_reproduction.md`
+4. `self_supervised_reproduction.md`
+5. `published_baselines.md`
+6. `dd_ssm_roadmap.md`
+7. `cross_domain_experiment_log.md`
