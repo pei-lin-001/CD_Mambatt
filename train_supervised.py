@@ -250,6 +250,7 @@ def build_model(args: argparse.Namespace, input_dim: int) -> MambAttRegressor:
         spd_predictor_mode=str(getattr(args, "spd_predictor_mode", "shared_head")),
         domain_conditioned_gate=bool(getattr(args, "domain_conditioned_gate", False)),
         frontend_adapter_mode=str(getattr(args, "frontend_adapter_mode", "none")),
+        transformer_domain_adapter_mode=str(getattr(args, "transformer_domain_adapter_mode", "none")),
     )
 
 
@@ -380,6 +381,7 @@ def main() -> None:
     parser.add_argument("--spd-gate-scheme", choices=("shared", "dt_bc"), default="shared", help="SPD gate scheme: one shared gate or separate dt/bc gates")
     parser.add_argument("--domain-conditioned-gate", action="store_true", help="Enable domain-conditioned scalar gate shift inside DD-Mamba")
     parser.add_argument("--frontend-adapter-mode", choices=("none", "target_affine", "target_residual"), default="none", help="Optional domain-conditioned frontend adapter inserted after conv1d inside DD-Mamba")
+    parser.add_argument("--transformer-domain-adapter-mode", choices=("none", "target_shift", "target_film"), default="none", help="Optional target-conditioned affine adapter injected inside each custom Transformer block")
     parser.add_argument("--val-all-windows", action="store_true", help="Validate on all sliding windows instead of only the last window per validation engine")
     parser.add_argument("--device", default="auto", help="auto, cuda, or cpu")
     parser.add_argument("--num-workers", type=int, default=0, help="DataLoader workers")
@@ -424,6 +426,7 @@ def main() -> None:
         "best_test_rmse": best_run["test_rmse"],
         "best_test_score": best_run["test_score"],
         "val_all_windows": bool(args.val_all_windows),
+        "transformer_domain_adapter_mode": str(getattr(args, "transformer_domain_adapter_mode", "none")),
         "mean_test_rmse": float(np.mean([float(item["test_rmse"]) for item in run_results])),
         "std_test_rmse": float(np.std([float(item["test_rmse"]) for item in run_results])),
         "mean_test_score": float(np.mean([float(item["test_score"]) for item in run_results])),

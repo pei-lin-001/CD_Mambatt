@@ -1,0 +1,127 @@
+{
+  "date": "2026-04-09",
+  "experiment": "cross_domain_ssl_union_on_nospec_frontend",
+  "task": "FD001_TO_FD003",
+  "protocol": {
+    "shots": 5,
+    "val_units": 10,
+    "source_split_seed": 42,
+    "few_shot_seeds": [
+      42,
+      43,
+      44
+    ],
+    "ssl_preset": "paper_full",
+    "ssl_data": "source_train_union_target_train",
+    "notes": [
+      "seed42 uses earlier ssl run directory but split files and effective config match the no-spec baseline exactly",
+      "all SSL runs use target_lr=0.0015, cosine scheduler, domain_feature_tap=frontend_mean, lambda_spec_domain=0.0"
+    ]
+  },
+  "baseline_nospec_run_root": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_20260409/FD001_TO_FD003",
+  "ssl_run_roots": [
+    "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_seed42_20260409/FD001_TO_FD003",
+    "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_nospec_recheck_20260409/FD001_TO_FD003"
+  ],
+  "per_seed": {
+    "42": {
+      "baseline": {
+        "source_rmse": 15.1866061710897,
+        "direct_target_rmse": 42.655347406288,
+        "adapted_rmse": 22.275245204264813,
+        "best_epoch": 2,
+        "gate_mean": 0.17000507700070722
+      },
+      "ssl": {
+        "source_rmse": 16.115393994641238,
+        "direct_target_rmse": 36.80868632654371,
+        "adapted_rmse": 21.373475582911258,
+        "source_best_epoch": 10,
+        "ssl_best_epoch": 19,
+        "ssl_best_loss": 0.010273140132415922,
+        "gate_mean": 0.06356042423858876
+      },
+      "delta_ssl_minus_baseline": {
+        "source_rmse": 0.9287878235515379,
+        "direct_target_rmse": -5.846661079744294,
+        "adapted_rmse": -0.9017696213535551
+      }
+    },
+    "43": {
+      "baseline": {
+        "source_rmse": 16.617362382783366,
+        "direct_target_rmse": 51.04017155815821,
+        "adapted_rmse": 19.640773821103934,
+        "best_epoch": 1,
+        "gate_mean": 0.1267608110140473
+      },
+      "ssl": {
+        "source_rmse": 16.509732094368427,
+        "direct_target_rmse": 25.25302996261714,
+        "adapted_rmse": 18.61098106351017,
+        "source_best_epoch": 8,
+        "ssl_best_epoch": 20,
+        "ssl_best_loss": 0.010932272599074526,
+        "gate_mean": 0.06460148027111998
+      },
+      "delta_ssl_minus_baseline": {
+        "source_rmse": -0.10763028841493849,
+        "direct_target_rmse": -25.787141595541065,
+        "adapted_rmse": -1.0297927575937642
+      }
+    },
+    "44": {
+      "baseline": {
+        "source_rmse": 15.70630664147525,
+        "direct_target_rmse": 35.86383444237196,
+        "adapted_rmse": 19.950032661897403,
+        "best_epoch": 8,
+        "gate_mean": 0.11463543461585515
+      },
+      "ssl": {
+        "source_rmse": 17.32781137356614,
+        "direct_target_rmse": 46.30180360413536,
+        "adapted_rmse": 19.560427393539427,
+        "source_best_epoch": 5,
+        "ssl_best_epoch": 20,
+        "ssl_best_loss": 0.01084026769789017,
+        "gate_mean": 0.013771933456944324
+      },
+      "delta_ssl_minus_baseline": {
+        "source_rmse": 1.621504732090889,
+        "direct_target_rmse": 10.437969161763398,
+        "adapted_rmse": -0.3896052683579754
+      }
+    }
+  },
+  "aggregate": {
+    "baseline_nospec": {
+      "mean_source_rmse": 15.836758398449438,
+      "std_source_rmse": 0.5913425854208044,
+      "mean_direct_target_rmse": 43.186451135606056,
+      "std_direct_target_rmse": 6.207084954118665,
+      "mean_adapted_rmse": 20.622017229088716,
+      "std_adapted_rmse": 1.1758067616409513,
+      "best_adapted_rmse": 19.640773821103934
+    },
+    "ssl_union_nospec": {
+      "mean_source_rmse": 16.650979154191933,
+      "std_source_rmse": 0.5049435771195105,
+      "mean_direct_target_rmse": 36.1211732977654,
+      "std_direct_target_rmse": 8.606866389750413,
+      "mean_adapted_rmse": 19.848294679986953,
+      "std_adapted_rmse": 1.1460060131852878,
+      "best_adapted_rmse": 18.61098106351017
+    },
+    "improvement_ssl_minus_baseline": {
+      "mean_source_rmse": 0.814220755742495,
+      "mean_direct_target_rmse": -7.065277837840654,
+      "mean_adapted_rmse": -0.7737225491017625
+    },
+    "comparison_to_previous_best_spec_domain_0p1": {
+      "previous_best_mean_adapted_rmse": 20.015135891890584,
+      "ssl_union_nospec_mean_adapted_rmse": 19.848294679986953,
+      "delta_vs_previous_best": -0.16684121190363044
+    }
+  }
+}

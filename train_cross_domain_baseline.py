@@ -18,6 +18,8 @@ from cd_mambatt.data import (
     fit_normalizer,
     get_train_validation_unit_ids,
     load_cmapss_split,
+    resolve_sensor_subset_preset,
+    select_sensor_subset,
     select_units,
 )
 from train_supervised import (
@@ -178,17 +180,28 @@ def build_window_loader_from_split(
     return loader, windows.shape
 
 
+def preprocess_sensor_view(args: argparse.Namespace, split: CMAPSSSplit) -> CMAPSSSplit:
+    sensor_indices = resolve_sensor_subset_preset(getattr(args, "sensor_subset", None))
+    return select_sensor_subset(split, sensor_indices)
+
+
+def get_normalization_mode(args: argparse.Namespace) -> str:
+    return str(getattr(args, "normalization_mode", "zscore"))
+
+
 def build_source_stage_data(
     args: argparse.Namespace,
     source_train_full: CMAPSSSplit,
     source_test_raw: CMAPSSSplit,
     source_split: dict[str, object],
 ) -> tuple[dict[str, DataLoader], dict[str, object]]:
+    source_train_full = preprocess_sensor_view(args, source_train_full)
+    source_test_raw = preprocess_sensor_view(args, source_test_raw)
     train_raw = select_units(source_train_full, source_split["train_units"])
     val_raw = select_units(source_train_full, source_split["val_units"])
 
     normalizer_source = train_raw if args.source_normalizer_fit_scope == "train_only" else source_train_full
-    normalizer = fit_normalizer(normalizer_source)
+    normalizer = fit_normalizer(normalizer_source, mode=get_normalization_mode(args))
     train_split = normalizer.transform(train_raw)
     val_split = normalizer.transform(val_raw)
     test_split = normalizer.transform(source_test_raw)
@@ -241,7 +254,9 @@ def build_target_direct_test_loader(
     target_train_full: CMAPSSSplit,
     target_test_raw: CMAPSSSplit,
 ) -> tuple[DataLoader, dict[str, object]]:
-    normalizer = fit_normalizer(target_train_full)
+    target_train_full = preprocess_sensor_view(args, target_train_full)
+    target_test_raw = preprocess_sensor_view(args, target_test_raw)
+    normalizer = fit_normalizer(target_train_full, mode=get_normalization_mode(args))
     test_split = normalizer.transform(target_test_raw)
     test_loader, test_shape = build_window_loader_from_split(
         test_split,
@@ -261,9 +276,11 @@ def build_target_finetune_data(
     target_test_raw: CMAPSSSplit,
     partition: dict[str, object],
 ) -> tuple[dict[str, DataLoader], dict[str, object]]:
+    target_train_full = preprocess_sensor_view(args, target_train_full)
+    target_test_raw = preprocess_sensor_view(args, target_test_raw)
     labeled_raw = select_units(target_train_full, partition["labeled_units"])
     val_raw = select_units(target_train_full, partition["validation_units"])
-    normalizer = fit_normalizer(target_train_full)
+    normalizer = fit_normalizer(target_train_full, mode=get_normalization_mode(args))
     labeled_split = normalizer.transform(labeled_raw)
     val_split = normalizer.transform(val_raw)
     test_split = normalizer.transform(target_test_raw)
@@ -583,6 +600,8 @@ def main() -> None:
     parser.add_argument("--window-size", type=int, default=20, help="Sliding window size")
     parser.add_argument("--stride", type=int, default=1, help="Sliding window stride")
     parser.add_argument("--rul-clip", type=int, default=125, help="Piece-wise linear RUL cap")
+    parser.add_argument("--sensor-subset", choices=("none", "paper14"), default="none", help="Optional input sensor subset preset")
+    parser.add_argument("--normalization-mode", choices=("zscore", "minmax"), default="zscore", help="Input normalization mode")
     parser.add_argument("--target-scale", type=float, default=1.0, help="Optional label scale divisor used during training")
     parser.add_argument("--grad-clip-norm", type=float, default=0.0, help="Clip gradient norm during training when > 0")
     parser.add_argument("--source-train-ratio", type=float, default=0.8, help="Engine-level source train/validation split ratio")

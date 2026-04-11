@@ -37,7 +37,8 @@ def load_run_record(run_root: Path, seed: int) -> dict[str, object]:
 
 
 def make_default_args(record: dict[str, object]) -> Namespace:
-    cd_stage = record["cd_stage"]
+    cd_stage_container = record["cd_stage"]
+    cd_stage = cd_stage_container.get("best_record", cd_stage_container)
     output_root = str(Path(record["source_split_path"]).parents[2])
     return Namespace(
         root="/home/shelterpl/data/CMAPSS",
@@ -50,13 +51,13 @@ def make_default_args(record: dict[str, object]) -> Namespace:
         target_scale=1.0,
         grad_clip_norm=0.0,
         source_train_ratio=0.8,
-        source_split_seed=int(record["source_split_seed"]),
+        source_split_seed=int(record.get("source_split_seed", 42)),
         source_split_path=str(record["source_split_path"]),
         resample_source_split_per_seed=False,
         source_normalizer_fit_scope="train_only",
         target_shots=5,
         target_val_units=10,
-        few_shot_seed=int(record["few_shot_seed"]),
+        few_shot_seed=int(record.get("few_shot_seed", record["seed"])),
         target_partition_path=str(record["target_partition_path"]),
         resample_few_shot_per_seed=False,
         seeds=str(record["seed"]),
@@ -179,24 +180,44 @@ def compute_block_tensors(model: nn.Module, windows: torch.Tensor) -> dict[str, 
     if block.in_proj.bias is not None:
         xz = xz + rearrange(block.in_proj.bias.to(dtype=xz.dtype), "d -> d 1")
     x_raw, z_raw = xz.chunk(2, dim=1)
-    x_conv = block.act(block.conv1d(x_raw)[..., :seqlen])
-    selectivity = block._project_selectivity(x_conv, batch=batch, seqlen=seqlen)
+    x_shared = block.act(block.conv1d(x_raw)[..., :seqlen])
+    x_combined = block._apply_frontend_adapter(x_shared, None)
+    selectivity = block._project_selectivity(x_shared, x_combined, batch=batch, seqlen=seqlen)
     inv_core = block._run_selective_scan_core(
-        x_conv,
+        x_shared,
         selectivity["dt_inv"],
         selectivity["B_inv"],
         selectivity["C_inv"],
     )
-    combined_core = block._run_selective_scan_core(
-        x_conv,
-        selectivity["dt_combined"],
-        selectivity["B_combined"],
-        selectivity["C_combined"],
-    )
-    D_x = x_conv * rearrange(block.D.float(), "d -> d 1")
+    if getattr(block, "spd_scan_mode", "mixed") == "dual_state":
+        if getattr(block, "spd_gate_scheme", "shared") == "dt_bc":
+            specific_core = block._run_selective_scan_core(
+                x_combined,
+                selectivity["gate_dt_scan"] * selectivity["dt_spec"],
+                selectivity["gate_bc_scan"] * selectivity["B_spec"],
+                selectivity["gate_bc_scan"] * selectivity["C_spec"],
+            )
+            combined_core = inv_core + specific_core
+        else:
+            specific_core = block._run_selective_scan_core(
+                x_combined,
+                selectivity["dt_spec"],
+                selectivity["B_spec"],
+                selectivity["C_spec"],
+            )
+            combined_core = inv_core + selectivity["gate_scan"] * specific_core
+    else:
+        combined_core = block._run_selective_scan_core(
+            x_combined,
+            selectivity["dt_combined"],
+            selectivity["B_combined"],
+            selectivity["C_combined"],
+        )
+    D_x = x_combined * rearrange(block.D.float(), "d -> d 1")
     aux = model.forward_features_with_aux(windows)
     return {
-        "x_conv": x_conv.detach(),
+        "x_conv": x_shared.detach(),
+        "x_combined": x_combined.detach(),
         "z_raw": z_raw.detach(),
         "gate": selectivity["gate"].detach(),
         "dt_inv": selectivity["dt_inv"].detach(),
@@ -306,11 +327,12 @@ def collect_stepwise_drift(
             windows = windows.to(device, non_blocking=True)
             tensors = compute_block_tensors(model, windows)
             x_conv = tensors["x_conv"]
+            x_combined = tensors["x_combined"]
             D_x = tensors["D_x"]
             batch, _, seqlen = x_conv.shape
-            selectivity = block._project_selectivity(x_conv, batch=batch, seqlen=seqlen)
+            selectivity = block._project_selectivity(x_conv, x_combined, batch=batch, seqlen=seqlen)
             inv_states = compute_state_trajectory(block, x_conv, selectivity["dt_inv"], selectivity["B_inv"])
-            mixed_states = compute_state_trajectory(block, x_conv, selectivity["dt_combined"], selectivity["B_combined"])
+            mixed_states = compute_state_trajectory(block, x_combined, selectivity["dt_combined"], selectivity["B_combined"])
             for step in range(seqlen):
                 out["x_conv"][step].append(x_conv[:, :, step].detach().cpu())
                 out["D_x"][step].append(D_x[:, :, step].detach().cpu())
@@ -413,12 +435,13 @@ def forward_variant(model: nn.Module, windows: torch.Tensor, variant: str) -> to
     if block.in_proj.bias is not None:
         xz = xz + rearrange(block.in_proj.bias.to(dtype=xz.dtype), "d -> d 1")
     x, z = xz.chunk(2, dim=1)
-    x = block.act(block.conv1d(x)[..., :seqlen])
-    selectivity = block._project_selectivity(x, batch=batch, seqlen=seqlen)
+    x_shared = block.act(block.conv1d(x)[..., :seqlen])
+    x_combined = block._apply_frontend_adapter(x_shared, None)
+    selectivity = block._project_selectivity(x_shared, x_combined, batch=batch, seqlen=seqlen)
 
     if variant == "full":
         hidden_out = block._run_selective_scan(
-            x,
+            x_combined,
             z,
             selectivity["dt_combined"],
             selectivity["B_combined"],
@@ -426,7 +449,7 @@ def forward_variant(model: nn.Module, windows: torch.Tensor, variant: str) -> to
         )
     elif variant == "inv_only":
         hidden_out = block._run_selective_scan(
-            x,
+            x_shared,
             z,
             selectivity["dt_inv"],
             selectivity["B_inv"],
@@ -434,7 +457,7 @@ def forward_variant(model: nn.Module, windows: torch.Tensor, variant: str) -> to
         )
     elif variant == "dt_only":
         hidden_out = block._run_selective_scan(
-            x,
+            x_combined,
             z,
             selectivity["dt_combined"],
             selectivity["B_inv"],
@@ -442,7 +465,7 @@ def forward_variant(model: nn.Module, windows: torch.Tensor, variant: str) -> to
         )
     elif variant == "bc_only":
         hidden_out = block._run_selective_scan(
-            x,
+            x_combined,
             z,
             selectivity["dt_inv"],
             selectivity["B_combined"],
@@ -575,6 +598,7 @@ def quick_adaptation_eval(
             model,
             stage_head,
             None,
+            None,
             source_loaders["train"],
             target_loaders["labeled"],
             target_loaders["unlabeled"],
@@ -591,13 +615,16 @@ def quick_adaptation_eval(
             lambda_monotonic=0.0,
             lambda_domain_adv=0.0,
             lambda_inv_mmd=args.lambda_inv_mmd if args.inv_alignment_mode == "mmd" else 0.0,
+            lambda_spec_domain=0.0,
             lambda_conditional_inv_mmd=args.lambda_conditional_inv_mmd,
             lambda_conditional_proto=getattr(args, "lambda_conditional_proto", 0.0),
             lambda_conditional_proto_ce=getattr(args, "lambda_conditional_proto_ce", 0.0),
             lambda_inv_spec_orth=args.lambda_inv_spec_orth,
+            lambda_inv_spec_xcorr=getattr(args, "lambda_inv_spec_xcorr", 0.0),
             lambda_spec_residual=args.lambda_spec_residual,
             lambda_inv_aux=args.lambda_inv_aux,
             lambda_spec_reconstruction=args.lambda_spec_reconstruction,
+            lambda_transformer_domain_adapter_l2=getattr(args, "lambda_transformer_domain_adapter_l2", 0.0),
             rul_clip=float(args.rul_clip),
             num_pseudo_stages=args.num_pseudo_stages,
             target_scale=float(args.target_scale),
@@ -611,6 +638,7 @@ def quick_adaptation_eval(
             inv_alignment_mode=str(args.inv_alignment_mode),
             domain_feature_tap=str(args.domain_feature_tap),
             stage_feature_mode=str(args.stage_feature_mode),
+            conditional_target_scope=str(getattr(args, "conditional_target_scope", "labeled_accepted")),
         )
         val_rmse = evaluate(model, target_loaders["val"], device, float(args.target_scale))["rmse"]
         if val_rmse < best_val_rmse:

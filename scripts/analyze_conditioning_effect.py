@@ -60,10 +60,15 @@ def main() -> None:
     probe_state = probe_ckpt["model_state_dict"]
     inferred_domain_conditioned_gate = any("domain_gate_shift" in key for key in probe_state)
     inferred_frontend_adapter_mode = "none"
+    inferred_transformer_domain_adapter_mode = "none"
     if any("frontend_target_adapter" in key for key in probe_state):
         inferred_frontend_adapter_mode = "target_residual"
     elif any("frontend_target_scale" in key or "frontend_target_bias" in key for key in probe_state):
         inferred_frontend_adapter_mode = "target_affine"
+    if any("target_ln1_gamma" in key or "target_ln2_gamma" in key for key in probe_state):
+        inferred_transformer_domain_adapter_mode = "target_film"
+    elif any("target_ln1_beta" in key or "target_ln2_beta" in key for key in probe_state):
+        inferred_transformer_domain_adapter_mode = "target_shift"
 
     model_args = Namespace(
         root=args.root,
@@ -96,6 +101,7 @@ def main() -> None:
         spd_predictor_mode=str(summary.get("spd_predictor_mode", "shared_head")),
         domain_conditioned_gate=bool(summary.get("domain_conditioned_gate", inferred_domain_conditioned_gate)),
         frontend_adapter_mode=str(summary.get("frontend_adapter_mode", inferred_frontend_adapter_mode)),
+        transformer_domain_adapter_mode=str(summary.get("transformer_domain_adapter_mode", inferred_transformer_domain_adapter_mode)),
     )
 
     device = torch.device(args.device)
@@ -138,12 +144,15 @@ def main() -> None:
                 row[f"{key}_norm"] = float(value.norm().item())
             if "frontend_target_adapter.bias" in key:
                 row[f"{key}_norm"] = float(value.norm().item())
+            if "target_ln1_gamma" in key or "target_ln2_gamma" in key or "target_ln1_beta" in key or "target_ln2_beta" in key:
+                row[f"{key}_norm"] = float(value.norm().item())
         rows.append(row)
 
     payload = {
         "run_root": str(run_root),
         "task": task_dir.name,
         "frontend_adapter_mode": str(model_args.frontend_adapter_mode),
+        "transformer_domain_adapter_mode": str(model_args.transformer_domain_adapter_mode),
         "domain_conditioned_gate": bool(model_args.domain_conditioned_gate),
         "rows": rows,
     }

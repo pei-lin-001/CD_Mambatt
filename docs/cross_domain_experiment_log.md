@@ -2577,3 +2577,144 @@ Earlier tests (from `big_lever_test.py` first run before crash):
     is not robust enough for all transfer directions
   - note: v2 refs here are 5-shot 5-seed; SPD is 5-shot 3-seed with different
     protocol, so the comparison is approximate
+
+### 13.11 Cross-domain union SSL + no-spec adaptation (FD001→FD003, 3 seeds)
+
+- date: 2026-04-09
+- scripts:
+  - `scripts/run_ssl_targeted_adaptation_experiment.py`
+  - baseline root: `runs/cd_mambatt_v3_frontend_highlr_nospecdiag_20260409/FD001_TO_FD003`
+- SSL preset: `paper_full`
+- SSL data: **source train union target train**
+- adaptation config:
+  - `lambda_spec_domain=0.0`
+  - `target_lr=1.5e-3`
+  - cosine scheduler
+  - `domain_feature_tap=frontend_mean`
+
+| Seed | Baseline no-spec | SSL + no-spec | Delta |
+|---|---:|---:|---:|
+| 42 | 22.28 | 21.37 | -0.90 |
+| 43 | 19.64 | 18.61 | -1.03 |
+| 44 | 19.95 | 19.56 | -0.39 |
+| **mean** | **20.62 ± 1.18** | **19.85 ± 1.15** | **-0.77** |
+
+- direct target RMSE mean:
+  - baseline no-spec: **43.19**
+  - SSL + no-spec: **36.12**
+  - delta: **-7.07**
+- source RMSE mean:
+  - baseline no-spec: **15.84**
+  - SSL + no-spec: **16.65**
+  - delta: **+0.81**
+
+- key conclusion:
+  - **union SSL + no-spec is currently the best verified FD001→FD003 line**
+  - compared with the previous best spec-domain run (`20.02 ± 0.75`), the new
+    mean is **19.85**, a further **-0.17 RMSE**
+  - this improvement comes with slightly worse source fitting but clearly better
+    target-domain generalization
+
+- artifacts:
+  - summary:
+    `docs/generated/ssl_union_nospec_frontend_summary_2026-04-09.json`
+  - results:
+    - `runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_seed42_20260409/...`
+    - `runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_nospec_recheck_20260409/...`
+
+### 13.12 Mechanism update: why union SSL helps
+
+- date: 2026-04-09
+- diagnostic files:
+  - `docs/generated/mamba_mechanism_diagnosis_nospec_seed43_2026-04-09.json`
+  - `docs/generated/mamba_mechanism_diagnosis_ssl_nospec_seed43_2026-04-09.json`
+  - `docs/generated/ssl_nospec_mechanism_compare_seed43_2026-04-09.json`
+
+- seed 43 comparison (baseline no-spec → SSL + no-spec):
+  - target test RMSE: **19.64 → 18.61**
+  - frontend `x_conv` MMD: **0.286 → 0.213**
+  - combined-core MMD: **0.638 → 0.181**
+  - invariant-state drift ratio (step20 / step1): **7.73 → 1.98**
+  - mixed-state drift ratio (step20 / step1): **6.73 → 1.46**
+  - target gate mean: **0.119 → 0.058**
+
+- interpretation:
+  - SSL does **not** mainly help by opening the spec gate
+  - instead, it appears to **stabilize the Mamba state dynamics** and strengthen
+    the invariant path
+  - after SSL, target-side `inv_only` ablation becomes very strong
+    (`19.80 → 18.03`), suggesting the gain comes primarily from a better
+    invariant backbone rather than stronger spec routing
+
+### 13.13 Correction to previous no-spec reading
+
+- an earlier quick read mistakenly treated a partial summary (missing seed 42)
+  as the final 3-seed no-spec result
+- the **correct** 3-seed no-spec baseline for FD001→FD003 is:
+  - **20.62 ± 1.18**, not `19.80`
+- therefore the accurate conclusion is:
+  - `lambda_spec_domain=0.0` **alone is not the new best**
+  - **cross-domain union SSL + no-spec** is the new best verified configuration
+
+### 13.14 Task-Embedding MAML paper-aligned probe (`FD001→FD003`, `K=1`)
+
+- date: 2026-04-09
+- reference paper:
+  - `docs/1-s2.0-S0166361525001617-main.pdf`
+  - reported `FD001→FD003 RMSE = 24.34`
+- newly aligned data settings:
+  - `target_shots = 1`
+  - `window_size = 30`
+  - `sensor_subset = paper14`
+  - `normalization_mode = minmax`
+
+#### Code support added
+
+- `paper14` sensor subset preset
+- Min-Max normalization support
+- fixed v3 monotonic-loader shape bug when using reduced sensor input
+
+#### Strict v3 probe (`target_val_units = 1`)
+
+- run:
+  - `runs/task_embed_paperalign_v3_strict_seed42/FD001_TO_FD003`
+- result:
+  - source test RMSE: **12.74**
+  - direct target RMSE: **52.98**
+  - adapted target RMSE: **46.30**
+
+#### Stable-validation v3 probe (`target_val_units = 10`)
+
+- run:
+  - `runs/task_embed_paperalign_v3_val10_seed42/FD001_TO_FD003`
+- result:
+  - source test RMSE: **12.82**
+  - direct target RMSE: **53.06**
+  - adapted target RMSE: **46.37**
+
+#### Minimal baseline under the same data settings
+
+- run:
+  - `runs/task_embed_paperalign_baseline_val10_seed42/FD001_TO_FD003`
+- result:
+  - source test RMSE: **13.04**
+  - direct target RMSE: **53.32**
+  - full-finetune target RMSE: **56.32**
+
+#### Diagnosis
+
+- our model can still fit the **source** subset well under this paper-aligned
+  preprocessing (`source RMSE ≈ 12.8`)
+- but in the strict **`K=1`** cross-domain regime, the current DA-style method
+  is **far worse** than the paper (`46.3` vs `24.34`)
+- increasing validation units from `1` to `10` does **not** materially change
+  the outcome, so the failure is **not mainly model-selection noise**
+- compared with plain one-shot fine-tuning, v3 still helps a lot:
+  - **56.32 → 46.37**
+  - so the adaptation scaffold is not useless
+- however, this probe strongly suggests that the paper's
+  **meta-learning / task-embedding machinery is genuinely important** in the
+  `K=1` regime
+
+- primary note:
+  - `docs/history/experiment_notes/task_embedding_maml_paper_alignment_probe_2026-04-09.md`

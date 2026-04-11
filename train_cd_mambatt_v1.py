@@ -10,7 +10,15 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from cd_mambatt.data import CMAPSSSplit, build_windows, fit_normalizer, load_cmapss_split, select_units
+from cd_mambatt.data import (
+    CMAPSSSplit,
+    build_windows,
+    fit_normalizer,
+    load_cmapss_split,
+    resolve_sensor_subset_preset,
+    select_sensor_subset,
+    select_units,
+)
 from cd_mambatt.losses import gaussian_mmd_loss
 from train_cross_domain_baseline import (
     build_source_stage_data,
@@ -28,11 +36,14 @@ def build_target_cd_data(
     target_test_raw: CMAPSSSplit,
     partition: dict[str, object],
 ) -> tuple[dict[str, DataLoader], dict[str, object]]:
+    sensor_indices = resolve_sensor_subset_preset(getattr(args, "sensor_subset", None))
+    target_train_full = select_sensor_subset(target_train_full, sensor_indices)
+    target_test_raw = select_sensor_subset(target_test_raw, sensor_indices)
     labeled_raw = select_units(target_train_full, partition["labeled_units"])
     val_raw = select_units(target_train_full, partition["validation_units"])
     unlabeled_raw = select_units(target_train_full, partition["unlabeled_units"])
 
-    normalizer = fit_normalizer(target_train_full)
+    normalizer = fit_normalizer(target_train_full, mode=str(getattr(args, "normalization_mode", "zscore")))
     labeled_split = normalizer.transform(labeled_raw)
     val_split = normalizer.transform(val_raw)
     unlabeled_split = normalizer.transform(unlabeled_raw)

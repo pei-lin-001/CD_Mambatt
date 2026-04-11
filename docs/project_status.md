@@ -1,6 +1,6 @@
 # CD-MambAtt Project Status
 
-Last updated: `2026-04-05`
+Last updated: `2026-04-09`
 
 ## 1. Current phase
 
@@ -19,12 +19,13 @@ Current status in one paragraph:
 > branch is now implemented and runnable on CUDA. A paper-style same-subset
 > **self-supervised MambAtt pipeline is also now implemented**, with FD001 nearly
 > matching the paper's one-shot SSL number, although the four-subset match is
-> incomplete and that line is currently paused. The latest finding is that
-> **the first hard semantic-SPD redesign underperformed, but the newer
-> shared-head-anchored semantic variant with source semantic warmup is now
-> showing the first real positive signal**, even though it still has not
-> surpassed the older SPD v0 invariant-MMD reference on the current limited
-> checks.
+> incomplete and that line is currently paused. The latest cross-domain finding is
+> that **source-train + target-train union SSL pretraining, followed by
+> `lambda_spec_domain=0` adaptation, is now the best verified `FD001→FD003`
+> configuration**, outperforming both the previous SPD best line and the plain
+> no-spec baseline. Mechanism checks suggest the gain comes mainly from
+> **stabilizing Mamba state drift and strengthening the invariant path**, not from
+> activating the SPD specific branch.
 
 ## 2. What is already completed
 
@@ -108,9 +109,9 @@ Interpretation:
 
 Negative delta means CD-MambAtt is better.
 
-### 3.4 `DD-SSM / SPD` current best results (2026-04-04)
+### 3.4 `DD-SSM / SPD` best non-SSL results (2026-04-04)
 
-**Best config**: SPD (dd_spd) + inv-MMD (0.1) + spec-domain-predictive (0.1) +
+**Best non-SSL config**: SPD (dd_spd) + inv-MMD (0.1) + spec-domain-predictive (0.1) +
 Adam LR=2e-3 + CosineAnnealingLR(T_max=20, eta_min=1e-5) +
 matched protocol (resample + val-all-windows)
 
@@ -120,6 +121,8 @@ matched protocol (resample + val-all-windows)
 - per-seed: 42=21.04, 43=19.99, 44=20.09
 - v2 reference: 21.13 ± 1.59
 - **improvement: -0.76 mean, -70% variance**
+- this remains the strongest **non-SSL SPD baseline**, but is no longer the
+  overall best canonical FD001→FD003 result after the union-SSL update below
 
 #### Multi-task validation (3 seeds each):
 
@@ -138,7 +141,75 @@ matched protocol (resample + val-all-windows)
 - Spec domain-predictive loss was the most effective auxiliary loss
 - Higher LR (2e-3 + cosine) was orthogonal to SPD and they stack
 
-### 3.5 Semantic-SPD v1/v2 status (SUPERSEDED)
+### 3.5 Cross-domain union SSL + no-spec adaptation (current best on FD001→FD003)
+
+Configuration:
+
+- cross-domain SSL pretraining on **source train ∪ target train**
+- SSL preset: `paper_full`
+- downstream adaptation:
+  - `lambda_spec_domain = 0.0`
+  - `target_lr = 1.5e-3`
+  - cosine scheduler
+  - `domain_feature_tap = frontend_mean`
+
+Result (`FD001→FD003`, seeds `42,43,44`):
+
+| Seed | Baseline no-spec | SSL + no-spec | Delta |
+|---|---:|---:|---:|
+| 42 | 22.2752 | 21.3735 | -0.9018 |
+| 43 | 19.6408 | 18.6110 | -1.0298 |
+| 44 | 19.9500 | 19.5604 | -0.3896 |
+| **mean** | **20.6220 ± 1.1758** | **19.8483 ± 1.1460** | **-0.7737** |
+
+Comparison to prior best:
+
+- previous SPD best mean (`spec_domain=0.1`, 3 seeds): **20.0151**
+- union SSL + no-spec mean: **19.8483**
+- further gain vs previous best: **-0.1668**
+
+Additional observations:
+
+- direct target RMSE mean:
+  - baseline no-spec: **43.1865**
+  - SSL + no-spec: **36.1212**
+  - delta: **-7.0653**
+- source RMSE mean:
+  - baseline no-spec: **15.8368**
+  - SSL + no-spec: **16.6510**
+  - delta: **+0.8142**
+
+Interpretation:
+
+- the current best verified canonical path is now:
+  - **union SSL pretrain + no-spec adaptation**
+- this improves target-domain generalization even though source-domain fitting
+  becomes slightly worse
+- the gain pattern matches the actual cross-domain objective better than pure
+  source fitting
+
+Mechanism snapshot (seed `43`):
+
+- `x_conv` MMD: **0.286 → 0.213**
+- combined-core MMD: **0.638 → 0.181**
+- invariant-state drift ratio (`step20 / step1`): **7.73 → 1.98**
+- mixed-state drift ratio (`step20 / step1`): **6.73 → 1.46**
+- target gate mean: **0.119 → 0.058**
+- target `inv_only` ablation RMSE: **19.80 → 18.03**
+
+Mechanism conclusion:
+
+- the improvement does **not** mainly come from opening the specific branch
+- instead, the strongest evidence is that union SSL **stabilizes the Mamba state
+  dynamics** and makes the **invariant path** substantially stronger
+
+Primary records:
+
+- experiment log: [`cross_domain_experiment_log.md`](./cross_domain_experiment_log.md)
+- generated summary:
+  [`generated/ssl_union_nospec_frontend_summary_2026-04-09.json`](./generated/ssl_union_nospec_frontend_summary_2026-04-09.json)
+
+### 3.6 Semantic-SPD v1/v2 status (SUPERSEDED)
 
 > **Note**: the semantic-SPD experiments below were all conducted under the
 > mismatched protocol. Given that SPD v0 + inv-MMD already beats v2 with the
@@ -178,7 +249,7 @@ Interpretation:
 - therefore, the next semantic-SPD iteration should keep the novelty direction
   but adopt a **softer decomposition protocol**
 
-### 3.6 Shared-aux semantic-SPD + source semantic warmup
+### 3.7 Shared-aux semantic-SPD + source semantic warmup
 
 New code state:
 
@@ -210,7 +281,7 @@ Interpretation:
 - that is still slightly weaker than the earlier SPD v0 invariant-MMD
   reference (**23.3498**), but it closes much of the gap
 
-### 3.7 Same-subset self-supervised MambAtt reproduction snapshot (PAUSED)
+### 3.8 Same-subset self-supervised MambAtt reproduction snapshot (PAUSED)
 
 Primary record:
 
@@ -238,6 +309,46 @@ Current judgment:
 - FD003/FD004 remain off-paper
 - therefore this branch is being **recorded and paused**, rather than pushed further right now
 
+### 3.7 Task-Embedding MAML paper-aligned probe (`FD001→FD003`, `K=1`)
+
+To check whether our current method can remain competitive under the
+**Task-Embedding MAML** paper's much harsher `1-shot` regime, we added:
+
+- `paper14` sensor subset support
+- Min-Max normalization support
+- paper-aligned v3 / baseline comparison runs
+
+Matched settings:
+
+- `target_shots = 1`
+- `window_size = 30`
+- `sensor_subset = paper14`
+- `normalization_mode = minmax`
+
+Seed-42 probe results:
+
+| Method | Result |
+|---|---:|
+| Task-Embedding MAML paper (`FD001→FD003`) | **24.34** |
+| `CD-MambAtt v3` strict probe (`val_units=1`) | **46.30** |
+| `CD-MambAtt v3` stable-val probe (`val_units=10`) | **46.37** |
+| minimal baseline (`pretrain + full finetune`) | **56.32** |
+
+Interpretation:
+
+- our source encoder is **not the main problem** here:
+  - source RMSE under this paper-aligned preprocessing is already about **12.8**
+- the true failure point is the **strict `K=1` cross-domain adaptation regime**
+- our current DA-style scaffold still helps relative to naive fine-tuning
+  (`56.32 → 46.37`)
+- but it is still **far behind** the paper's `24.34`
+- this is strong evidence that the paper's **meta-learning / task-embedding**
+  mechanism matters in the `1-shot` setting
+
+Primary note:
+
+- [`history/experiment_notes/task_embedding_maml_paper_alignment_probe_2026-04-09.md`](./history/experiment_notes/task_embedding_maml_paper_alignment_probe_2026-04-09.md)
+
 ## 4. What we can and cannot claim right now
 
 ### Can claim
@@ -248,13 +359,17 @@ Current judgment:
 - `DD-SSM / SPD v0` is implemented inside the Mamba path and validated on CUDA
 - **SPD v0 + inv-MMD beats v2 on both mean RMSE and cross-seed stability** on the canonical `FD001 -> FD003` task (3 seeds, matched protocol)
 - **SPD provides a net -0.91 RMSE improvement** over v3+bare under the same protocol
+- **cross-domain union SSL + no-spec adaptation is now the best verified
+  FD001→FD003 configuration** (`19.85` mean RMSE across seeds `42,43,44`)
+- mechanism evidence now supports a more specific claim:
+  **union SSL mainly strengthens the invariant path and reduces Mamba state drift**
 
 ### Cannot claim yet
 
 - exact author-level reproduction of the target paper supervised number
 - strict publication-grade apples-to-apples superiority over `FOMLN`
-- SPD superiority across **multiple tasks** (only FD001→FD003 tested so far)
-- SPD superiority at 5-seed scale (only 3 seeds so far)
+- cross-domain union SSL superiority across **multiple tasks** (currently only verified on FD001→FD003)
+- new best SSL-enhanced line superiority at 5-seed scale (only 3 seeds so far)
 
 ## 5. Current bottlenecks
 
@@ -262,23 +377,24 @@ Current judgment:
 2. ~~SPD innovation depth insufficient~~ → SPD is now the main innovation
 3. ~~GRL unstable~~ → replaced with inv-MMD + spec-domain-predictive
 4. ~~protocol mismatch~~ → resolved (v3 defaults fixed)
-5. **SPD wins on FD001→FD003 and FD001→FD004 but loses on FD003→FD001** — need to diagnose task-direction asymmetry
-6. **disentanglement effect is weak** (gate barely moves, domain separability Δ only 0.3%)
-7. **only 3 seeds tested** — need 5 seeds for statistical confidence
-8. `FOMLN` comparison not yet done with SPD
+5. **union SSL + no-spec is only verified on FD001→FD003** — need to test transfer-direction robustness, especially FD003→FD001
+6. **SPD disentanglement effect is still weak** (gate barely moves; current best result does not rely on a strong spec branch)
+7. **only 3 seeds tested** on the new best SSL line — need 5 seeds for stronger confidence
+8. `FOMLN` comparison not yet refreshed against the new SSL-enhanced line
 9. second dataset (XJTU-SY) not yet started
-10. no ablation study yet under matched protocol
+10. no matched-protocol ablation yet isolating **union SSL vs no union SSL** on multiple tasks
 
 ## 6. Next priority
 
 Current recommended priority order:
 
-1. **diagnose FD003→FD001 failure**: check if LR=2e-3 is too aggressive for small source domains (FD003 has only 100 engines); try LR=1e-3 on this task
-2. **5-seed expansion** on FD001→FD003 with best config
-3. **ablation study** under matched protocol: bare vs SPD vs SPD+inv-MMD vs SPD+inv-MMD+spec-domain
-4. **run SPD on 15-shot** for fair comparison against FOMLN
-5. explore **stronger disentanglement** mechanisms (current gate/separation is too weak)
-6. second dataset (XJTU-SY)
+1. **validate union SSL + no-spec on FD003→FD001** and at least one more transfer pair
+2. **5-seed expansion** on FD001→FD003 with the new best SSL line
+3. **ablation study** under matched protocol: no-spec baseline vs union SSL + no-spec
+4. **run the new best line on 15-shot** for a refreshed comparison against FOMLN
+5. after SSL multi-task validation, decide whether FD003→FD001 still needs task-specific LR / architecture diagnosis
+6. only after SSL multi-task validation, revisit whether stronger SPD disentanglement is still worth pursuing
+7. second dataset (XJTU-SY)
 
 ## 7. Important files
 

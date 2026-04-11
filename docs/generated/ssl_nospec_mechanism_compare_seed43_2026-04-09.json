@@ -1,0 +1,55 @@
+{
+  "date": "2026-04-09",
+  "seed": 43,
+  "baseline_run_root": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_20260409/FD001_TO_FD003",
+  "ssl_run_root": "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_nospec_recheck_20260409/FD001_TO_FD003",
+  "headline": "union SSL improves FD001->FD003 mainly by stabilizing Mamba state drift and strengthening the invariant path, not by activating the spec gate",
+  "key_metrics": {
+    "target_test_rmse": {
+      "baseline_nospec": 19.640773821103934,
+      "ssl_nospec": 18.61098106351017,
+      "delta": -1.0297927575937642
+    },
+    "frontend_x_conv_mmd": {
+      "baseline_nospec": 0.28647059202194214,
+      "ssl_nospec": 0.21345359086990356,
+      "delta": -0.07301700115203857
+    },
+    "combined_core_mmd": {
+      "baseline_nospec": 0.6375409364700317,
+      "ssl_nospec": 0.18072667717933655,
+      "delta": -0.4568142592906952
+    },
+    "inv_state_drift_ratio_20_over_1": {
+      "baseline_nospec": 7.726596021323625,
+      "ssl_nospec": 1.9822950660672312,
+      "delta": -5.744300955256394
+    },
+    "mixed_state_drift_ratio_20_over_1": {
+      "baseline_nospec": 6.727429121937792,
+      "ssl_nospec": 1.4632900752403797,
+      "delta": -5.264139046697412
+    },
+    "target_gate_mean": {
+      "baseline_nospec": 0.11863617599010468,
+      "ssl_nospec": 0.05829479172825813,
+      "delta": -0.06034138426184654
+    },
+    "target_spec_feature_ratio": {
+      "baseline_nospec": 0.009625590406358242,
+      "ssl_nospec": 0.03755391016602516,
+      "delta": 0.02792831975966692
+    },
+    "target_inv_only_rmse": {
+      "baseline_nospec": 19.804107221588126,
+      "ssl_nospec": 18.029313237157385,
+      "delta": -1.7747939844307403
+    }
+  },
+  "interpretation_points": [
+    "x_conv remains fully domain-separable by linear probe, but its MMD drops after SSL, so SSL does not erase domain cues at the frontend; it reduces their magnitude downstream.",
+    "The largest structural change is at the SSM state level: inv_state and mixed_state drift ratios collapse sharply after SSL.",
+    "The best target ablation after SSL is inv_only, which indicates the gain is mostly from a stronger invariant path rather than stronger spec routing.",
+    "Gate mean decreases after SSL, yet spec_feature_ratio increases, suggesting spec features become more concentrated/effective rather than simply more often opened."
+  ]
+}

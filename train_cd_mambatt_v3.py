@@ -17,6 +17,8 @@ from cd_mambatt.data import (
     build_monotonic_window_pairs,
     fit_normalizer,
     load_cmapss_split,
+    resolve_sensor_subset_preset,
+    select_sensor_subset,
     select_units,
 )
 from cd_mambatt.losses import (
@@ -50,9 +52,12 @@ def endless_loader(loader: DataLoader):
 
 
 def uses_domain_conditioning(model: nn.Module) -> bool:
-    return hasattr(model, "mamba_blocks") and any(
+    if getattr(model, "transformer_domain_adapter_mode", "none") != "none":
+        return True
+    mamba_blocks = getattr(model, "mamba_blocks", None)
+    return mamba_blocks is not None and any(
         getattr(block, "domain_conditioned_gate", False) or getattr(block, "frontend_adapter_mode", "none") != "none"
-        for block in model.mamba_blocks
+        for block in mamba_blocks
     )
 
 
@@ -98,6 +103,25 @@ def inv_spec_orthogonality_loss(invariant_features: torch.Tensor, specific_featu
     specific_norm = F.normalize(specific_features, p=2, dim=1)
     cosine = (invariant_norm * specific_norm).sum(dim=1)
     return (cosine * cosine).mean()
+
+
+def inv_spec_cross_correlation_loss(invariant_features: torch.Tensor, specific_features: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
+    if invariant_features.ndim != 2 or specific_features.ndim != 2:
+        raise ValueError("Cross-correlation loss expects 2D feature tensors")
+    if invariant_features.shape != specific_features.shape:
+        raise ValueError("Cross-correlation loss expects matching invariant/specific feature shapes")
+    if invariant_features.shape[0] <= 1:
+        return invariant_features.new_zeros(())
+
+    invariant_centered = invariant_features - invariant_features.mean(dim=0, keepdim=True)
+    specific_centered = specific_features - specific_features.mean(dim=0, keepdim=True)
+    invariant_std = invariant_centered.std(dim=0, unbiased=False, keepdim=True).clamp_min(eps)
+    specific_std = specific_centered.std(dim=0, unbiased=False, keepdim=True).clamp_min(eps)
+    invariant_norm = invariant_centered / invariant_std
+    specific_norm = specific_centered / specific_std
+    cross_corr = invariant_norm.transpose(0, 1) @ specific_norm
+    cross_corr = cross_corr / float(invariant_features.shape[0])
+    return cross_corr.pow(2).mean()
 
 
 def residual_reconstruction_loss(outputs: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -477,6 +501,8 @@ def build_target_monotonic_loader(
     target_train_full: CMAPSSSplit,
     partition: dict[str, object],
 ) -> tuple[DataLoader, dict[str, object]]:
+    sensor_indices = resolve_sensor_subset_preset(getattr(args, "sensor_subset", None))
+    target_train_full = select_sensor_subset(target_train_full, sensor_indices)
     train_units = np.sort(
         np.concatenate(
             [
@@ -486,7 +512,7 @@ def build_target_monotonic_loader(
         )
     )
     train_raw = select_units(target_train_full, train_units)
-    normalizer = fit_normalizer(target_train_full)
+    normalizer = fit_normalizer(target_train_full, mode=str(getattr(args, "normalization_mode", "zscore")))
     train_split = normalizer.transform(train_raw)
     pair_data = build_monotonic_window_pairs(
         train_split,
@@ -531,9 +557,11 @@ def run_cd_pseudo_epoch(
     lambda_conditional_proto: float,
     lambda_conditional_proto_ce: float,
     lambda_inv_spec_orth: float,
+    lambda_inv_spec_xcorr: float,
     lambda_spec_residual: float,
     lambda_inv_aux: float,
     lambda_spec_reconstruction: float,
+    lambda_transformer_domain_adapter_l2: float,
     rul_clip: float,
     num_pseudo_stages: int,
     target_scale: float,
@@ -584,9 +612,11 @@ def run_cd_pseudo_epoch(
     total_conditional_proto_loss = 0.0
     total_conditional_proto_ce_loss = 0.0
     total_inv_spec_orth_loss = 0.0
+    total_inv_spec_xcorr_loss = 0.0
     total_spec_residual_loss = 0.0
     total_inv_aux_loss = 0.0
     total_spec_reconstruction_loss = 0.0
+    total_transformer_domain_adapter_penalty = 0.0
     total_combined_loss = 0.0
     total_pseudo_candidates = 0
     total_pseudo_accepted = 0
@@ -855,6 +885,24 @@ def run_cd_pseudo_epoch(
             else:
                 inv_spec_orth_loss = source_features.new_zeros(())
 
+            if lambda_inv_spec_xcorr > 0:
+                inv_spec_xcorr_loss = (
+                    inv_spec_cross_correlation_loss(
+                        source_outputs.get("invariant_features", source_features),
+                        source_outputs.get("specific_features", torch.zeros_like(source_features)),
+                    )
+                    + inv_spec_cross_correlation_loss(
+                        target_labeled_outputs.get("invariant_features", target_labeled_features),
+                        target_labeled_outputs.get("specific_features", torch.zeros_like(target_labeled_features)),
+                    )
+                    + inv_spec_cross_correlation_loss(
+                        target_unlabeled_outputs.get("invariant_features", target_unlabeled_features),
+                        target_unlabeled_outputs.get("specific_features", torch.zeros_like(target_unlabeled_features)),
+                    )
+                ) / 3.0
+            else:
+                inv_spec_xcorr_loss = source_features.new_zeros(())
+
             if lambda_spec_residual > 0:
                 spec_residual_loss = (
                     source_outputs["prediction_spec"].pow(2).mean()
@@ -881,6 +929,13 @@ def run_cd_pseudo_epoch(
             else:
                 spec_reconstruction_loss = source_features.new_zeros(())
 
+            if lambda_transformer_domain_adapter_l2 > 0 and hasattr(model, "transformer_domain_adapter_penalty"):
+                transformer_domain_adapter_penalty = model.transformer_domain_adapter_penalty()
+                if transformer_domain_adapter_penalty is None:
+                    transformer_domain_adapter_penalty = source_features.new_zeros(())
+            else:
+                transformer_domain_adapter_penalty = source_features.new_zeros(())
+
             total_loss = (
                 source_loss_weight * source_loss
                 + target_loss_weight * target_loss
@@ -896,9 +951,11 @@ def run_cd_pseudo_epoch(
                 + lambda_conditional_proto * conditional_proto_loss
                 + lambda_conditional_proto_ce * conditional_proto_ce_loss
                 + lambda_inv_spec_orth * inv_spec_orth_loss
+                + lambda_inv_spec_xcorr * inv_spec_xcorr_loss
                 + lambda_spec_residual * spec_residual_loss
                 + lambda_inv_aux * inv_aux_loss
                 + lambda_spec_reconstruction * spec_reconstruction_loss
+                + lambda_transformer_domain_adapter_l2 * transformer_domain_adapter_penalty
             )
 
             if is_train:
@@ -929,9 +986,11 @@ def run_cd_pseudo_epoch(
             total_conditional_proto_loss += float(conditional_proto_loss.detach().cpu()) * batch_examples
             total_conditional_proto_ce_loss += float(conditional_proto_ce_loss.detach().cpu()) * batch_examples
             total_inv_spec_orth_loss += float(inv_spec_orth_loss.detach().cpu()) * batch_examples
+            total_inv_spec_xcorr_loss += float(inv_spec_xcorr_loss.detach().cpu()) * batch_examples
             total_spec_residual_loss += float(spec_residual_loss.detach().cpu()) * batch_examples
             total_inv_aux_loss += float(inv_aux_loss.detach().cpu()) * batch_examples
             total_spec_reconstruction_loss += float(spec_reconstruction_loss.detach().cpu()) * batch_examples
+            total_transformer_domain_adapter_penalty += float(transformer_domain_adapter_penalty.detach().cpu()) * batch_examples
             total_combined_loss += float(total_loss.detach().cpu()) * batch_examples
             total_contrastive_valid_anchor_ratio += float(contrastive_stats["valid_anchor_ratio"]) * batch_examples
             total_contrastive_positive_count += float(contrastive_stats["mean_positive_count"]) * batch_examples
@@ -963,9 +1022,11 @@ def run_cd_pseudo_epoch(
         "conditional_proto_loss": total_conditional_proto_loss / total_examples,
         "conditional_proto_ce_loss": total_conditional_proto_ce_loss / total_examples,
         "inv_spec_orth_loss": total_inv_spec_orth_loss / total_examples,
+        "inv_spec_xcorr_loss": total_inv_spec_xcorr_loss / total_examples,
         "spec_residual_loss": total_spec_residual_loss / total_examples,
         "inv_aux_loss": total_inv_aux_loss / total_examples,
         "spec_reconstruction_loss": total_spec_reconstruction_loss / total_examples,
+        "transformer_domain_adapter_penalty": total_transformer_domain_adapter_penalty / total_examples,
         "total_loss": total_combined_loss / total_examples,
         "pseudo_acceptance_ratio": pseudo_acceptance_ratio,
         "pseudo_mean_distance": mean_pseudo_distance,
@@ -1124,9 +1185,11 @@ def fit_cd_pseudo_stage(
             lambda_conditional_proto=float(args.lambda_conditional_proto),
             lambda_conditional_proto_ce=float(args.lambda_conditional_proto_ce),
             lambda_inv_spec_orth=float(args.lambda_inv_spec_orth),
+            lambda_inv_spec_xcorr=float(getattr(args, "lambda_inv_spec_xcorr", 0.0)),
             lambda_spec_residual=float(args.lambda_spec_residual),
             lambda_inv_aux=float(args.lambda_inv_aux),
             lambda_spec_reconstruction=float(args.lambda_spec_reconstruction),
+            lambda_transformer_domain_adapter_l2=float(getattr(args, "lambda_transformer_domain_adapter_l2", 0.0)),
             rul_clip=float(args.rul_clip),
             num_pseudo_stages=args.num_pseudo_stages,
             target_scale=target_scale,
@@ -1169,9 +1232,11 @@ def fit_cd_pseudo_stage(
             "train_conditional_proto_loss": train_stats["conditional_proto_loss"],
             "train_conditional_proto_ce_loss": train_stats["conditional_proto_ce_loss"],
             "train_inv_spec_orth_loss": train_stats["inv_spec_orth_loss"],
+            "train_inv_spec_xcorr_loss": train_stats["inv_spec_xcorr_loss"],
             "train_spec_residual_loss": train_stats["spec_residual_loss"],
             "train_inv_aux_loss": train_stats["inv_aux_loss"],
             "train_spec_reconstruction_loss": train_stats["spec_reconstruction_loss"],
+            "train_transformer_domain_adapter_penalty": train_stats["transformer_domain_adapter_penalty"],
             "pseudo_acceptance_ratio": train_stats["pseudo_acceptance_ratio"],
             "pseudo_mean_distance": train_stats["pseudo_mean_distance"],
             "pseudo_stage_quantile": stage_quantile,
@@ -1206,9 +1271,11 @@ def fit_cd_pseudo_stage(
             "lambda_conditional_proto_ce": float(args.lambda_conditional_proto_ce),
             "conditional_target_scope": str(args.conditional_target_scope),
             "lambda_inv_spec_orth": args.lambda_inv_spec_orth,
+            "lambda_inv_spec_xcorr": float(getattr(args, "lambda_inv_spec_xcorr", 0.0)),
             "lambda_spec_residual": args.lambda_spec_residual,
             "lambda_inv_aux": args.lambda_inv_aux,
             "lambda_spec_reconstruction": args.lambda_spec_reconstruction,
+            "lambda_transformer_domain_adapter_l2": float(getattr(args, "lambda_transformer_domain_adapter_l2", 0.0)),
         }
         history.append(record)
         print(json.dumps(record, ensure_ascii=False))
@@ -1453,6 +1520,7 @@ def train_one_seed(
             "lambda_conditional_proto": float(args.lambda_conditional_proto),
             "lambda_conditional_proto_ce": float(args.lambda_conditional_proto_ce),
             "lambda_inv_spec_orth": float(args.lambda_inv_spec_orth),
+            "lambda_inv_spec_xcorr": float(getattr(args, "lambda_inv_spec_xcorr", 0.0)),
             "lambda_spec_residual": float(args.lambda_spec_residual),
             "lambda_inv_aux": float(args.lambda_inv_aux),
             "lambda_spec_reconstruction": float(args.lambda_spec_reconstruction),
@@ -1470,6 +1538,7 @@ def train_one_seed(
             "spd_predictor_mode": str(args.spd_predictor_mode),
             "domain_conditioned_gate": bool(getattr(args, "domain_conditioned_gate", False)),
             "frontend_adapter_mode": str(getattr(args, "frontend_adapter_mode", "none")),
+            "transformer_domain_adapter_mode": str(getattr(args, "transformer_domain_adapter_mode", "none")),
             "domain_feature_tap": str(args.domain_feature_tap),
             "grl_lambda": float(args.grl_lambda),
             "grl_warmup_epochs": int(args.grl_warmup_epochs),
@@ -1509,9 +1578,11 @@ def train_one_seed(
             "best_conditional_proto_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_conditional_proto_loss", 0.0)),
             "best_conditional_proto_ce_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_conditional_proto_ce_loss", 0.0)),
             "best_inv_spec_orth_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_inv_spec_orth_loss", 0.0)),
+            "best_inv_spec_xcorr_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_inv_spec_xcorr_loss", 0.0)),
             "best_spec_residual_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_spec_residual_loss", 0.0)),
             "best_inv_aux_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_inv_aux_loss", 0.0)),
             "best_spec_reconstruction_loss": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_spec_reconstruction_loss", 0.0)),
+            "best_transformer_domain_adapter_penalty": 0.0 if cd_stage["best_record"] is None else float(cd_stage["best_record"].get("train_transformer_domain_adapter_penalty", 0.0)),
             "best_active_adaptation_freeze_mode": None if cd_stage["best_record"] is None else str(cd_stage["best_record"].get("active_adaptation_freeze_mode", "")),
             "uses_domain_adv": bool(cd_stage["uses_domain_adv"]),
             "uses_spec_domain": bool(cd_stage.get("uses_spec_domain", False)),
@@ -1551,9 +1622,11 @@ def summarize_results(run_results: list[dict[str, object]], args: argparse.Names
         "lambda_spec_domain": float(getattr(args, "lambda_spec_domain", 0.0)),
         "lambda_conditional_inv_mmd": float(args.lambda_conditional_inv_mmd),
         "lambda_inv_spec_orth": float(args.lambda_inv_spec_orth),
+        "lambda_inv_spec_xcorr": float(getattr(args, "lambda_inv_spec_xcorr", 0.0)),
         "lambda_spec_residual": float(args.lambda_spec_residual),
         "lambda_inv_aux": float(args.lambda_inv_aux),
         "lambda_spec_reconstruction": float(args.lambda_spec_reconstruction),
+        "lambda_transformer_domain_adapter_l2": float(getattr(args, "lambda_transformer_domain_adapter_l2", 0.0)),
         "inv_alignment_mode": str(args.inv_alignment_mode),
         "semantic_warmup_epochs": int(args.semantic_warmup_epochs),
         "semantic_warmup_lr": float(args.semantic_warmup_lr),
@@ -1567,6 +1640,7 @@ def summarize_results(run_results: list[dict[str, object]], args: argparse.Names
         "spd_predictor_mode": str(args.spd_predictor_mode),
         "domain_conditioned_gate": bool(getattr(args, "domain_conditioned_gate", False)),
         "frontend_adapter_mode": str(getattr(args, "frontend_adapter_mode", "none")),
+        "transformer_domain_adapter_mode": str(getattr(args, "transformer_domain_adapter_mode", "none")),
         "domain_feature_tap": str(args.domain_feature_tap),
         "grl_lambda": float(args.grl_lambda),
         "grl_warmup_epochs": int(args.grl_warmup_epochs),
@@ -1602,6 +1676,8 @@ def main() -> None:
     parser.add_argument("--window-size", type=int, default=20, help="Sliding window size")
     parser.add_argument("--stride", type=int, default=1, help="Sliding window stride")
     parser.add_argument("--rul-clip", type=int, default=125, help="Piece-wise linear RUL cap")
+    parser.add_argument("--sensor-subset", choices=("none", "paper14"), default="none", help="Optional input sensor subset preset")
+    parser.add_argument("--normalization-mode", choices=("zscore", "minmax"), default="zscore", help="Input normalization mode")
     parser.add_argument("--target-scale", type=float, default=1.0, help="Optional label scale divisor used during training")
     parser.add_argument("--grad-clip-norm", type=float, default=0.0, help="Clip gradient norm during training when > 0")
     parser.add_argument("--source-train-ratio", type=float, default=0.8, help="Engine-level source train/validation split ratio")
@@ -1648,6 +1724,7 @@ def main() -> None:
         help="Which target samples participate in stage-conditional invariant alignment",
     )
     parser.add_argument("--lambda-inv-spec-orth", type=float, default=0.0, help="Weight for invariant/specific feature orthogonality regularization")
+    parser.add_argument("--lambda-inv-spec-xcorr", type=float, default=0.0, help="Weight for invariant/specific cross-correlation suppression (a stable MI surrogate)")
     parser.add_argument("--lambda-spec-residual", type=float, default=0.0, help="Weight for residual-size regularization on the specific prediction branch")
     parser.add_argument("--lambda-inv-aux", type=float, default=0.0, help="Weight for supervised invariant-branch RUL prediction")
     parser.add_argument("--lambda-spec-reconstruction", type=float, default=0.0, help="Weight for residual reconstruction of the shared prediction by the specific branch")
@@ -1701,6 +1778,8 @@ def main() -> None:
     parser.add_argument("--spd-predictor-mode", choices=("shared_head", "decomposed_residual", "shared_aux_residual"), default="shared_head", help="Prediction head mode for SPD: original shared head, hard decomposed residual predictor, or shared-head-anchored auxiliary decomposition")
     parser.add_argument("--domain-conditioned-gate", action="store_true", help="Enable domain-conditioned gate: add a learnable shift to the SPD gate based on domain label (0=source, 1=target)")
     parser.add_argument("--frontend-adapter-mode", choices=("none", "target_affine", "target_residual"), default="none", help="Optional target-conditioned frontend adapter inserted after conv1d inside DD-Mamba")
+    parser.add_argument("--transformer-domain-adapter-mode", choices=("none", "target_shift", "target_film"), default="none", help="Optional target-conditioned affine adapter inside each custom Transformer block")
+    parser.add_argument("--lambda-transformer-domain-adapter-l2", type=float, default=0.0, help="L2 regularization weight for the target-conditioned Transformer adapter parameters")
     parser.add_argument("--source-val-all-windows", action=argparse.BooleanOptionalAction, default=True, help="Validate source stage on all source validation windows (default: True to match v2 best-config protocol)")
     parser.add_argument("--target-val-all-windows", action=argparse.BooleanOptionalAction, default=True, help="Validate target adaptation stage on all target validation windows (default: True to match v2 best-config protocol)")
     parser.add_argument("--device", default="auto", help="auto, cuda, or cpu")

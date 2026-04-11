@@ -72,11 +72,15 @@ class TransformerBlock(nn.Module):
         dim_feedforward: int,
         norm_mode: str,
         inner_dropout: float,
+        domain_adapter_mode: str = "none",
     ) -> None:
         super().__init__()
         if norm_mode not in {"pre", "post"}:
             raise ValueError("norm_mode must be 'pre' or 'post'")
+        if domain_adapter_mode not in {"none", "target_shift", "target_film"}:
+            raise ValueError("domain_adapter_mode must be 'none', 'target_shift', or 'target_film'")
         self.norm_mode = norm_mode
+        self.domain_adapter_mode = domain_adapter_mode
         self.norm1 = nn.LayerNorm(d_model)
         self.attn = nn.MultiheadAttention(
             embed_dim=d_model,
@@ -92,18 +96,95 @@ class TransformerBlock(nn.Module):
             nn.ReLU(),
             nn.Linear(dim_feedforward, d_model),
         )
+        if domain_adapter_mode == "none":
+            self.target_ln1_gamma = None
+            self.target_ln1_beta = None
+            self.target_ln2_gamma = None
+            self.target_ln2_beta = None
+        else:
+            self.target_ln1_beta = nn.Parameter(torch.zeros(d_model))
+            self.target_ln2_beta = nn.Parameter(torch.zeros(d_model))
+            if domain_adapter_mode == "target_film":
+                self.target_ln1_gamma = nn.Parameter(torch.zeros(d_model))
+                self.target_ln2_gamma = nn.Parameter(torch.zeros(d_model))
+            else:
+                self.target_ln1_gamma = None
+                self.target_ln2_gamma = None
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _apply_domain_adapter(
+        self,
+        hidden: torch.Tensor,
+        *,
+        domain_label: torch.Tensor | None,
+        gamma: nn.Parameter | None,
+        beta: nn.Parameter | None,
+    ) -> torch.Tensor:
+        if domain_label is None or beta is None:
+            return hidden
+        if hidden.ndim != 3:
+            raise ValueError("TransformerBlock domain adapter expects 3D hidden tensor")
+        if hidden.shape[1] == domain_label.shape[0]:
+            domain_mask = domain_label.float().view(1, -1, 1)
+        elif hidden.shape[0] == domain_label.shape[0]:
+            domain_mask = domain_label.float().view(-1, 1, 1)
+        else:
+            raise ValueError("domain_label shape does not match hidden tensor batch dimension")
+        beta_view = beta.view(1, 1, -1)
+        if gamma is None:
+            return hidden + domain_mask * beta_view
+        gamma_view = gamma.view(1, 1, -1)
+        return hidden * (1.0 + domain_mask * gamma_view) + domain_mask * beta_view
+
+    def domain_adapter_penalty(self) -> torch.Tensor | None:
+        penalties = []
+        for parameter in (
+            self.target_ln1_gamma,
+            self.target_ln1_beta,
+            self.target_ln2_gamma,
+            self.target_ln2_beta,
+        ):
+            if parameter is not None:
+                penalties.append(parameter.pow(2).mean())
+        if not penalties:
+            return None
+        return torch.stack(penalties).mean()
+
+    def forward(self, x: torch.Tensor, *, domain_label: torch.Tensor | None = None) -> torch.Tensor:
         if self.norm_mode == "pre":
             normed = self.norm1(x)
+            normed = self._apply_domain_adapter(
+                normed,
+                domain_label=domain_label,
+                gamma=self.target_ln1_gamma,
+                beta=self.target_ln1_beta,
+            )
             attn_out, _ = self.attn(normed, normed, normed, need_weights=False)
             x = x + self.dropout1(attn_out)
-            x = x + self.dropout2(self.ffn(self.norm2(x)))
+            ffn_input = self.norm2(x)
+            ffn_input = self._apply_domain_adapter(
+                ffn_input,
+                domain_label=domain_label,
+                gamma=self.target_ln2_gamma,
+                beta=self.target_ln2_beta,
+            )
+            x = x + self.dropout2(self.ffn(ffn_input))
             return x
 
         attn_out, _ = self.attn(x, x, x, need_weights=False)
         x = self.norm1(x + self.dropout1(attn_out))
-        return self.norm2(x + self.dropout2(self.ffn(x)))
+        x = self._apply_domain_adapter(
+            x,
+            domain_label=domain_label,
+            gamma=self.target_ln1_gamma,
+            beta=self.target_ln1_beta,
+        )
+        ffn_input = self._apply_domain_adapter(
+            x,
+            domain_label=domain_label,
+            gamma=self.target_ln2_gamma,
+            beta=self.target_ln2_beta,
+        )
+        return self.norm2(x + self.dropout2(self.ffn(ffn_input)))
 
 
 class TorchTransformerStack(nn.Module):
@@ -156,6 +237,7 @@ class MambAttRegressor(nn.Module):
         spd_predictor_mode: str = "shared_head",
         domain_conditioned_gate: bool = False,
         frontend_adapter_mode: str = "none",
+        transformer_domain_adapter_mode: str = "none",
     ) -> None:
         super().__init__()
         if d_model % num_heads != 0:
@@ -174,6 +256,8 @@ class MambAttRegressor(nn.Module):
             raise ValueError(
                 "spd_predictor_mode must be 'shared_head', 'decomposed_residual', or 'shared_aux_residual'"
             )
+        if transformer_impl == "torch" and transformer_domain_adapter_mode != "none":
+            raise ValueError("transformer_domain_adapter_mode is only supported with transformer_impl='custom'")
 
         self.input_proj = nn.Identity() if input_dim == d_model else nn.Linear(input_dim, d_model)
         if mamba_block_mode == "bare":
@@ -226,6 +310,7 @@ class MambAttRegressor(nn.Module):
         self.spd_gate_scheme = spd_gate_scheme
         self.spd_predictor_mode = spd_predictor_mode
         self.frontend_adapter_mode = frontend_adapter_mode
+        self.transformer_domain_adapter_mode = transformer_domain_adapter_mode
         if transformer_impl == "custom":
             self.transformer_blocks = nn.ModuleList(
                 [
@@ -235,6 +320,7 @@ class MambAttRegressor(nn.Module):
                         dim_feedforward=dim_feedforward,
                         norm_mode=transformer_norm_mode,
                         inner_dropout=transformer_inner_dropout,
+                        domain_adapter_mode=transformer_domain_adapter_mode,
                     )
                     for _ in range(num_transformer_layers)
                 ]
@@ -285,12 +371,12 @@ class MambAttRegressor(nn.Module):
                 hidden = block(hidden)
         return hidden, last_block_aux
 
-    def _decode_sequence(self, hidden: torch.Tensor) -> torch.Tensor:
+    def _decode_sequence(self, hidden: torch.Tensor, *, domain_label: torch.Tensor | None = None) -> torch.Tensor:
         hidden = hidden.transpose(0, 1)
         hidden = self.positional_encoding(hidden)
         if self.transformer_impl == "custom":
             for block in self.transformer_blocks:
-                hidden = block(hidden)
+                hidden = block(hidden, domain_label=domain_label)
         else:
             hidden = self.transformer_encoder(hidden)
         return hidden[-1]
@@ -298,7 +384,7 @@ class MambAttRegressor(nn.Module):
     def _encode_internal(self, x: torch.Tensor, *, return_aux: bool, domain_label: torch.Tensor | None = None) -> torch.Tensor | dict[str, torch.Tensor]:
         hidden, last_block_aux = self._forward_mamba_sequence(x, return_aux=return_aux, domain_label=domain_label)
         pre_transformer_hidden = hidden
-        features = self._decode_sequence(pre_transformer_hidden)
+        features = self._decode_sequence(pre_transformer_hidden, domain_label=domain_label)
         if not return_aux:
             return features
 
@@ -309,7 +395,7 @@ class MambAttRegressor(nn.Module):
             "pre_transformer_features": pre_transformer_hidden[:, -1, :],
         }
         if last_block_aux is not None:
-            invariant_features = self._decode_sequence(last_block_aux["inv_sequence"])
+            invariant_features = self._decode_sequence(last_block_aux["inv_sequence"], domain_label=domain_label)
             outputs["invariant_features"] = invariant_features
             outputs["specific_features"] = features - invariant_features
             if "conv_sequence" in last_block_aux:
@@ -324,6 +410,19 @@ class MambAttRegressor(nn.Module):
                 outputs["gate_bc_sequence"] = last_block_aux["gate_bc_sequence"]
                 outputs["gate_bc_mean"] = last_block_aux["gate_bc_mean"]
         return outputs
+
+    def transformer_domain_adapter_penalty(self) -> torch.Tensor | None:
+        if self.transformer_blocks is None:
+            return None
+        penalties = []
+        for block in self.transformer_blocks:
+            if hasattr(block, "domain_adapter_penalty"):
+                penalty = block.domain_adapter_penalty()
+                if penalty is not None:
+                    penalties.append(penalty)
+        if not penalties:
+            return None
+        return torch.stack(penalties).mean()
 
     def encode(self, x: torch.Tensor, *, domain_label: torch.Tensor | None = None) -> torch.Tensor:
         return self._encode_internal(x, return_aux=False, domain_label=domain_label)

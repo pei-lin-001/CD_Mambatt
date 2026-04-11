@@ -15,6 +15,11 @@ SUBSETS = {"FD001", "FD002", "FD003", "FD004"}
 CONDITION_NORMALIZED_SUBSETS = {"FD002", "FD004"}
 CONDITION_KEY_DECIMALS = 0
 PSEUDO_LABEL_SENSOR_DROP = (1, 5, 6, 10, 16, 18, 19)
+PAPER_14_SENSOR_IDS_1_BASED = (2, 3, 4, 7, 8, 9, 11, 12, 13, 14, 15, 17, 20, 21)
+PAPER_14_SENSOR_INDICES = tuple(sensor_id - 1 for sensor_id in PAPER_14_SENSOR_IDS_1_BASED)
+SENSOR_SUBSET_PRESETS: dict[str, tuple[int, ...]] = {
+    "paper14": PAPER_14_SENSOR_INDICES,
+}
 OPERATING_SETTING_NAMES = [f"op_setting_{idx}" for idx in range(1, 4)]
 SENSOR_NAMES = [f"sensor_{idx}" for idx in range(1, 22)]
 FEATURE_NAMES = SENSOR_NAMES
@@ -47,11 +52,16 @@ class CMAPSSSplit:
 @dataclass(frozen=True)
 class CMAPSSNormalizer:
     subset: str
+    mode: str
     use_condition_normalization: bool
     mean: np.ndarray
     std: np.ndarray
+    min: np.ndarray
+    max: np.ndarray
     condition_mean: dict[int, np.ndarray]
     condition_std: dict[int, np.ndarray]
+    condition_min: dict[int, np.ndarray]
+    condition_max: dict[int, np.ndarray]
     condition_key_to_id: dict[tuple[float, float, float], int]
     condition_centers: np.ndarray
 
@@ -61,12 +71,24 @@ class CMAPSSNormalizer:
             sensors = np.empty_like(split.sensors, dtype=np.float32)
             for condition_id in np.unique(condition_ids):
                 mask = condition_ids == condition_id
-                sensors[mask] = (
-                    split.sensors[mask] - self.condition_mean[int(condition_id)]
-                ) / self.condition_std[int(condition_id)]
+                if self.mode == "zscore":
+                    sensors[mask] = (
+                        split.sensors[mask] - self.condition_mean[int(condition_id)]
+                    ) / self.condition_std[int(condition_id)]
+                elif self.mode == "minmax":
+                    cond_min = self.condition_min[int(condition_id)]
+                    cond_max = self.condition_max[int(condition_id)]
+                    sensors[mask] = 2.0 * (split.sensors[mask] - cond_min) / (cond_max - cond_min) - 1.0
+                else:
+                    raise ValueError(f"Unknown normalization mode: {self.mode}")
         else:
             condition_ids = split.condition_ids
-            sensors = (split.sensors - self.mean) / self.std
+            if self.mode == "zscore":
+                sensors = (split.sensors - self.mean) / self.std
+            elif self.mode == "minmax":
+                sensors = 2.0 * (split.sensors - self.min) / (self.max - self.min) - 1.0
+            else:
+                raise ValueError(f"Unknown normalization mode: {self.mode}")
         return CMAPSSSplit(
             subset=split.subset,
             split=split.split,
@@ -82,6 +104,7 @@ class CMAPSSNormalizer:
         payload: dict[str, object] = {
             "subset": self.subset,
             "feature_names": FEATURE_NAMES,
+            "mode": self.mode,
             "use_condition_normalization": self.use_condition_normalization,
         }
         if self.use_condition_normalization:
@@ -89,6 +112,8 @@ class CMAPSSNormalizer:
                 str(condition_id): {
                     "mean": self.condition_mean[condition_id].tolist(),
                     "std": self.condition_std[condition_id].tolist(),
+                    "min": self.condition_min[condition_id].tolist(),
+                    "max": self.condition_max[condition_id].tolist(),
                 }
                 for condition_id in sorted(self.condition_mean)
             }
@@ -100,6 +125,8 @@ class CMAPSSNormalizer:
         else:
             payload["mean"] = self.mean.tolist()
             payload["std"] = self.std.tolist()
+            payload["min"] = self.min.tolist()
+            payload["max"] = self.max.tolist()
         return payload
 
     def _lookup_condition_id(self, operating_setting: np.ndarray) -> int:
@@ -267,6 +294,39 @@ def select_units(split: CMAPSSSplit, unit_ids: np.ndarray | list[int]) -> CMAPSS
     )
 
 
+def resolve_sensor_subset_preset(sensor_subset: str | None) -> tuple[int, ...] | None:
+    if sensor_subset is None:
+        return None
+    key = sensor_subset.strip().lower()
+    if key in {"", "none", "all"}:
+        return None
+    if key not in SENSOR_SUBSET_PRESETS:
+        raise ValueError(f"Unknown sensor subset preset '{sensor_subset}'. Expected one of: {sorted(SENSOR_SUBSET_PRESETS)}")
+    return SENSOR_SUBSET_PRESETS[key]
+
+
+def select_sensor_subset(split: CMAPSSSplit, sensor_indices: tuple[int, ...] | list[int] | np.ndarray | None) -> CMAPSSSplit:
+    if sensor_indices is None:
+        return split
+    indices = np.asarray(sensor_indices, dtype=np.int64)
+    if indices.ndim != 1 or indices.size == 0:
+        raise ValueError("sensor_indices must be a non-empty 1D collection")
+    if np.any(indices < 0) or np.any(indices >= split.sensors.shape[1]):
+        raise ValueError(
+            f"sensor_indices must be within [0, {split.sensors.shape[1] - 1}] for split with feature_dim={split.sensors.shape[1]}"
+        )
+    return CMAPSSSplit(
+        subset=split.subset,
+        split=split.split,
+        unit_ids=split.unit_ids,
+        cycles=split.cycles,
+        operating_settings=split.operating_settings,
+        sensors=split.sensors[:, indices].astype(np.float32),
+        rul=split.rul,
+        condition_ids=split.condition_ids,
+    )
+
+
 def get_train_validation_unit_ids(
     split: CMAPSSSplit,
     *,
@@ -299,8 +359,11 @@ def split_train_validation_by_unit(
     return select_units(split, train_units), select_units(split, val_units)
 
 
-def fit_normalizer(split: CMAPSSSplit, eps: float = 1e-8) -> CMAPSSNormalizer:
+def fit_normalizer(split: CMAPSSSplit, eps: float = 1e-8, mode: str = "zscore") -> CMAPSSNormalizer:
     subset = _validate_subset(split.subset)
+    mode = mode.lower()
+    if mode not in {"zscore", "minmax"}:
+        raise ValueError("mode must be either 'zscore' or 'minmax'")
     if subset in CONDITION_NORMALIZED_SUBSETS:
         condition_keys = [_condition_key(row, decimals=CONDITION_KEY_DECIMALS) for row in split.operating_settings]
         unique_keys = sorted(set(condition_keys))
@@ -308,32 +371,50 @@ def fit_normalizer(split: CMAPSSSplit, eps: float = 1e-8) -> CMAPSSNormalizer:
         condition_ids = np.asarray([condition_key_to_id[key] for key in condition_keys], dtype=np.int32)
         condition_mean: dict[int, np.ndarray] = {}
         condition_std: dict[int, np.ndarray] = {}
+        condition_min: dict[int, np.ndarray] = {}
+        condition_max: dict[int, np.ndarray] = {}
         for condition_id in np.unique(condition_ids):
             mask = condition_ids == condition_id
             mean = split.sensors[mask].mean(axis=0)
             std = split.sensors[mask].std(axis=0)
+            cond_min = split.sensors[mask].min(axis=0)
+            cond_max = split.sensors[mask].max(axis=0)
             condition_mean[int(condition_id)] = mean.astype(np.float32)
             condition_std[int(condition_id)] = np.where(std < eps, 1.0, std).astype(np.float32)
+            condition_min[int(condition_id)] = cond_min.astype(np.float32)
+            condition_max[int(condition_id)] = np.where((cond_max - cond_min) < eps, cond_min + 1.0, cond_max).astype(np.float32)
         return CMAPSSNormalizer(
             subset=subset,
+            mode=mode,
             use_condition_normalization=True,
             mean=np.zeros(split.feature_dim, dtype=np.float32),
             std=np.ones(split.feature_dim, dtype=np.float32),
+            min=np.zeros(split.feature_dim, dtype=np.float32),
+            max=np.ones(split.feature_dim, dtype=np.float32),
             condition_mean=condition_mean,
             condition_std=condition_std,
+            condition_min=condition_min,
+            condition_max=condition_max,
             condition_key_to_id=condition_key_to_id,
             condition_centers=np.asarray(unique_keys, dtype=np.float32),
         )
 
     mean = split.sensors.mean(axis=0)
     std = split.sensors.std(axis=0)
+    data_min = split.sensors.min(axis=0)
+    data_max = split.sensors.max(axis=0)
     return CMAPSSNormalizer(
         subset=subset,
+        mode=mode,
         use_condition_normalization=False,
         mean=mean.astype(np.float32),
         std=np.where(std < eps, 1.0, std).astype(np.float32),
+        min=data_min.astype(np.float32),
+        max=np.where((data_max - data_min) < eps, data_min + 1.0, data_max).astype(np.float32),
         condition_mean={},
         condition_std={},
+        condition_min={},
+        condition_max={},
         condition_key_to_id={},
         condition_centers=np.zeros((0, 3), dtype=np.float32),
     )
