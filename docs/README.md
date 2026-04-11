@@ -10,6 +10,7 @@ Historical experiment notes were **not deleted**; they were moved into `docs/his
 | File | Purpose |
 |---|---|
 | [`stage_report_for_advisor_zh_2026-04-11.md`](./stage_report_for_advisor_zh_2026-04-11.md) | Detailed Chinese stage report prepared for advisor briefing, including objectives, method evolution, key results, diagnostics, literature comparison, bottlenecks, and next steps |
+| [`technical_appendix_zh_2026-04-11.md`](./technical_appendix_zh_2026-04-11.md) | Detailed Chinese technical appendix covering code structure, data pipeline, model internals, SPD/DD-Mamba implementation, loss design, and current mechanism conclusions |
 | [`project_overview_zh_2026-04-08.md`](./project_overview_zh_2026-04-08.md) | Chinese project overview for quickly understanding the current code, results, bottlenecks, and next priorities |
 | [`project_status.md`](./project_status.md) | Current project snapshot, key results, fairness judgment, and next priorities |
 | [`supervised_reproduction.md`](./supervised_reproduction.md) | Consolidated target-paper supervised reproduction status |
