@@ -1,0 +1,140 @@
+{
+  "date": "2026-04-12",
+  "task": "FD001_TO_FD003",
+  "question": "can selective adaptation freezing stabilize the union-SSL branch without adding new losses?",
+  "reference_protocol": {
+    "shots": 5,
+    "val_units": 10,
+    "source_split_seed": 42,
+    "few_shot_seeds": [
+      42,
+      43,
+      44,
+      45,
+      46
+    ],
+    "ssl_preset": "paper_full",
+    "ssl_data": "source_train_union_target_train",
+    "target_lr": 0.0015,
+    "target_lr_scheduler": "cosine",
+    "target_lr_min": 1e-05,
+    "domain_feature_tap": "frontend_mean",
+    "lambda_mmd": 0.1,
+    "lambda_source_stage": 1.0,
+    "lambda_inv_mmd": 0.1,
+    "lambda_pseudo": 0.5,
+    "lambda_monotonic": 0.05,
+    "lambda_spec_domain": 0.0
+  },
+  "seed46_targeted_probes": {
+    "original_ssl_full": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/seed_46/result.json",
+      "adapted_rmse": 26.425029659253177
+    },
+    "lower_lr_full": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed46_ssl_full_lr5e4_probe_20260412/FD001_TO_FD003/seed_46/result.json",
+      "adapted_rmse": 25.157031103269334
+    },
+    "head_only": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed46_ssl_full_headonly_probe_20260412/FD001_TO_FD003/seed_46/result.json",
+      "adapted_rmse": 36.44996140882172
+    },
+    "head_only_5_then_full": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed46_ssl_headonly5_then_full_probe_20260412/FD001_TO_FD003/seed_46/result.json",
+      "adapted_rmse": 25.558249093014417
+    },
+    "transformer_head": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed46_ssl_full_transformer_head_probe_20260412/FD001_TO_FD003/seed_46/result.json",
+      "adapted_rmse": 24.56709859587068
+    },
+    "transformer_head_5_then_full": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed46_ssl_transformer_head5_then_full_probe_20260412/FD001_TO_FD003/seed_46/result.json",
+      "adapted_rmse": 24.56709859587068
+    },
+    "spec_gate_transformer_head": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed46_ssl_full_spec_gate_transformer_head_probe_20260412/FD001_TO_FD003/seed_46/result.json",
+      "adapted_rmse": 24.10537339213379
+    }
+  },
+  "candidate": {
+    "name": "spec_gate_transformer_head",
+    "description": "freeze the shared Mamba/invariant core, but keep the specific projections, gate projection, transformer blocks, and head trainable during adaptation."
+  },
+  "per_seed": {
+    "42": {
+      "baseline_no_spec_adapted_rmse": 22.275245204264813,
+      "original_ssl_adapted_rmse": 21.373475582911258,
+      "selective_freeze_adapted_rmse": 20.01706204217756,
+      "delta_selective_minus_original_ssl": -1.3564135407336977,
+      "delta_selective_minus_baseline": -2.258183162087253,
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed42_ssl_full_spec_gate_transformer_head_probe_20260412/FD001_TO_FD003/seed_42/result.json"
+    },
+    "43": {
+      "baseline_no_spec_adapted_rmse": 19.640773821103934,
+      "original_ssl_adapted_rmse": 18.61098106351017,
+      "selective_freeze_adapted_rmse": 19.71574284810162,
+      "delta_selective_minus_original_ssl": 1.1047617845914495,
+      "delta_selective_minus_baseline": 0.07496902699768653,
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed43_ssl_full_spec_gate_transformer_head_probe_20260412/FD001_TO_FD003/seed_43/result.json"
+    },
+    "44": {
+      "baseline_no_spec_adapted_rmse": 19.950032661897403,
+      "original_ssl_adapted_rmse": 19.560427393539427,
+      "selective_freeze_adapted_rmse": 19.0360839388542,
+      "delta_selective_minus_original_ssl": -0.5243434546852264,
+      "delta_selective_minus_baseline": -0.9139487230432029,
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed44_ssl_full_spec_gate_transformer_head_probe_20260412/FD001_TO_FD003/seed_44/result.json"
+    },
+    "45": {
+      "baseline_no_spec_adapted_rmse": 24.136819605448647,
+      "original_ssl_adapted_rmse": 23.1766906312902,
+      "selective_freeze_adapted_rmse": 21.623040423426886,
+      "delta_selective_minus_original_ssl": -1.5536502078633134,
+      "delta_selective_minus_baseline": -2.5137791820217606,
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed45_ssl_full_spec_gate_transformer_head_probe_20260412/FD001_TO_FD003/seed_45/result.json"
+    },
+    "46": {
+      "baseline_no_spec_adapted_rmse": 18.45576385138894,
+      "original_ssl_adapted_rmse": 26.425029659253177,
+      "selective_freeze_adapted_rmse": 24.10537339213379,
+      "delta_selective_minus_original_ssl": -2.319656267119388,
+      "delta_selective_minus_baseline": 5.6496095407448485,
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed46_ssl_full_spec_gate_transformer_head_probe_20260412/FD001_TO_FD003/seed_46/result.json"
+    }
+  },
+  "aggregate": {
+    "baseline_no_spec": {
+      "mean_adapted_rmse": 20.891727028820746,
+      "std_adapted_rmse": 2.282013211128793
+    },
+    "original_ssl_full": {
+      "mean_adapted_rmse": 21.829320866100847,
+      "std_adapted_rmse": 3.1084291930403314
+    },
+    "selective_freeze_ssl": {
+      "mean_adapted_rmse": 20.89946052893881,
+      "std_adapted_rmse": 2.028141520206792
+    },
+    "delta_selective_minus_original_ssl": {
+      "mean_adapted_rmse": -0.9298603371620352,
+      "std_adapted_rmse": -1.0802876728335393
+    },
+    "delta_selective_minus_baseline_no_spec": {
+      "mean_adapted_rmse": 0.0077335001180635745,
+      "std_adapted_rmse": -0.2538716909220011
+    },
+    "sign_test": {
+      "selective_better_than_original_ssl_seed_count": 4,
+      "selective_worse_than_original_ssl_seed_count": 1,
+      "selective_better_than_baseline_seed_count": 3,
+      "selective_worse_than_baseline_seed_count": 2
+    }
+  },
+  "evidence_supported_observations": [
+    "Lower adaptation LR helps the SSL bad seed, so adaptation dynamics matter.",
+    "Permanent head-only adaptation is far too restrictive on the SSL bad seed and degrades to 36.45 RMSE, so the fix is not simply 'do not adapt the encoder at all'.",
+    "Keeping the shared Mamba core frozen while adapting the specific/gate branch plus Transformer/head is the strongest stabilization lever tested in this round.",
+    "The selective-freeze line improves 4 of 5 SSL seeds and reduces the union-SSL 5-seed mean from 21.83 to 20.90 while also reducing the sample standard deviation from 3.11 to 2.03.",
+    "The same selective-freeze line is not a new canonical best yet: against baseline no-spec, the 5-seed mean is essentially tied (20.8995 vs 20.8917), not superior."
+  ]
+}

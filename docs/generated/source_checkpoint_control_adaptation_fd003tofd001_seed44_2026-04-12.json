@@ -1,0 +1,100 @@
+{
+  "task": "FD003_TO_FD001",
+  "seed": 44,
+  "date": "2026-04-12",
+  "fixed_context": {
+    "source_split_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/splits/source_engine_split.json",
+    "target_partition_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/splits/target_few_shot_seed44.json",
+    "manual_adaptation_recipe": {
+      "inv_alignment_mode": "mmd",
+      "lambda_mmd": 0.1,
+      "lambda_inv_mmd": 0.1,
+      "lambda_pseudo": 0.5,
+      "lambda_monotonic": 0.05,
+      "domain_feature_tap": "frontend_mean",
+      "target_lr": 0.0015,
+      "target_lr_scheduler": "cosine",
+      "target_lr_min": 1e-05,
+      "target_epochs": 20,
+      "adaptation_seed": 44
+    },
+    "note": "These manual-control runs fix the target-stage initialization across checkpoints. They are suitable for relative checkpoint comparison but do not reproduce the canonical absolute baseline because source-stage training is skipped, so target-stage RNG state differs from the original end-to-end run."
+  },
+  "recipe_validity_diagnostic": {
+    "canonical_baseline_result_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/seed_44/result.json",
+    "canonical_baseline_adapted_rmse": 20.861252069526742,
+    "manual_invmean_result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_baseline_frontend_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+    "manual_invmean_adapted_rmse": 21.843492555858006,
+    "manual_frontendmean_result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_baseline_frontendmean_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+    "manual_frontendmean_adapted_rmse": 21.798970907031556,
+    "diagnosis": "Manual mode must receive domain_feature_tap explicitly, and even after that the absolute baseline stays above the canonical run. The remaining gap is consistent with a changed target-stage RNG/history caused by skipping source-stage training before adaptation."
+  },
+  "checkpoint_results": [
+    {
+      "name": "baseline_frontendmean",
+      "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_baseline_frontendmean_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/seed_44/source/best.pt",
+      "source_test_rmse": 15.979897081277223,
+      "target_direct_rmse": 23.25162673148259,
+      "adapted_rmse": 21.798970907031556,
+      "adapted_gain_vs_direct": 1.4526558244510355,
+      "best_val_rmse": 22.839547395155073,
+      "best_epoch": 2,
+      "best_gate_mean": 0.12414363397806054,
+      "best_pseudo_acceptance_ratio": 0.014063777596075225
+    },
+    {
+      "name": "ssl_union_frontendmean",
+      "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_ssl_union_frontendmean_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_nospec_fd003tofd001_20260409/FD003_TO_FD001/seed_44/source/best.pt",
+      "source_test_rmse": 17.114704079506087,
+      "target_direct_rmse": 24.15209655054983,
+      "adapted_rmse": 22.905086096953507,
+      "adapted_gain_vs_direct": 1.2470104535963245,
+      "best_val_rmse": 22.326713001337637,
+      "best_epoch": 2,
+      "best_gate_mean": 0.06786745058525312,
+      "best_pseudo_acceptance_ratio": 0.01760697737803216
+    },
+    {
+      "name": "w12_frontendmean",
+      "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_w12_frontendmean_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/window_horizon_probe_fd003tofd001_w12_seed44/FD003_TO_FD001/seed_44/source/best.pt",
+      "source_test_rmse": 16.666327099623608,
+      "target_direct_rmse": 26.711130095908707,
+      "adapted_rmse": 24.17860324592953,
+      "adapted_gain_vs_direct": 2.5325268499791775,
+      "best_val_rmse": 23.022929984171327,
+      "best_epoch": 5,
+      "best_gate_mean": 0.14665723160753447,
+      "best_pseudo_acceptance_ratio": 0.010466067048242027
+    },
+    {
+      "name": "pretap_frontendmean",
+      "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_pretap_frontendmean_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_nospec_pretap_fd003tofd001_seed44_20260409/FD003_TO_FD001/seed_44/source/best.pt",
+      "source_test_rmse": 16.065342000800776,
+      "target_direct_rmse": 23.202114697121544,
+      "adapted_rmse": 21.757714514329823,
+      "adapted_gain_vs_direct": 1.4444001827917212,
+      "best_val_rmse": 22.823929169253674,
+      "best_epoch": 2,
+      "best_gate_mean": 0.12411003913691751,
+      "best_pseudo_acceptance_ratio": 0.014499863723085309
+    }
+  ],
+  "aggregate": {
+    "pearson_source_test_vs_adapted": 0.6780014090452613,
+    "pearson_target_direct_vs_adapted": 0.9769488633194627
+  },
+  "evidence_supported_conclusions": [
+    "Within this fixed-control setup, target direct RMSE tracks adapted RMSE much more closely than source test RMSE.",
+    "A clearly worse source checkpoint (w12) remains clearly worse after adaptation, so source quality still matters at least in the bad-source regime.",
+    "Source test RMSE is not sufficient: pretap has slightly worse source test RMSE than baseline but slightly better direct and adapted RMSE.",
+    "The SSL source checkpoint alone does not carry over the historical SSL gain under this fixed adaptation recipe; its source, direct, and adapted RMSE are all worse than the baseline source checkpoint here."
+  ],
+  "open_interpretation": [
+    "This does not prove source quality is irrelevant; it shows the strong single-factor version of that hypothesis is too coarse.",
+    "This does not prove SSL is ineffective; it shows the previous SSL benefit likely depends on more than swapping in the SSL source checkpoint alone."
+  ]
+}

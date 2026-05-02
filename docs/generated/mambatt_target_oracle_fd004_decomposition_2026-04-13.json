@@ -1,0 +1,59 @@
+{
+  "date": "2026-04-13",
+  "purpose": "extend the MambAtt target-domain oracle controls to FD004 so the harder multi-condition transfer headroom is quantified under the same reproduced supervised recipe",
+  "new_target_oracle_run": {
+    "subset": "FD004",
+    "run_root": "/home/shelterpl/cd_mambatt/runs/oracle_supervised_fd004_post_dff84_valall_lr5e4_wd1e4/FD004",
+    "recipe": {
+      "transformer_norm_mode": "post",
+      "dim_feedforward": 84,
+      "val_all_windows": true,
+      "lr": 0.0005,
+      "weight_decay": 0.0001,
+      "dropout": 0.5,
+      "window_size": 20,
+      "stride": 1,
+      "rul_clip": 125,
+      "split_mode": "fixed",
+      "split_seed": 42,
+      "seeds": [
+        42,
+        43,
+        44
+      ]
+    },
+    "result": {
+      "mean_test_rmse": 16.44951865328692,
+      "std_test_rmse": 0.00957852919090233,
+      "best_test_rmse": 16.438091221781214,
+      "best_val_rmse": 16.302579013058523
+    }
+  },
+  "reference_numbers": {
+    "fd001_supervised_fixed_mean_test_rmse": 15.0937,
+    "fd001_supervised_resampled_mean_test_rmse": 15.3024,
+    "fd001_to_fd004_direct_transfer_mean_rmse": 32.3820,
+    "fd001_to_fd004_cd_v2_5seed_mean_rmse": 24.3449,
+    "fd001_to_fd004_spd_highlr_3seed_mean_rmse": 23.72
+  },
+  "delta_vs_fd004_target_oracle": {
+    "fd001_supervised_fixed_minus_fd004_oracle": -1.3558186532869209,
+    "fd001_supervised_resampled_minus_fd004_oracle": -1.1471186532869194,
+    "fd001_to_fd004_direct_transfer_minus_fd004_oracle": 15.932481346713083,
+    "fd001_to_fd004_cd_v2_5seed_minus_fd004_oracle": 7.895381346713078,
+    "fd001_to_fd004_spd_highlr_3seed_minus_fd004_oracle": 7.27048134671308
+  },
+  "evidence_supported_conclusions": [
+    "The harder multi-condition target FD004 is now covered by the same target-domain oracle control used for FD003.",
+    "Under the current reproduced MambAtt recipe, full target supervision on FD004 reaches 16.45 mean RMSE, still far below every current FD001_TO_FD004 cross-domain few-shot result.",
+    "Therefore the current FD001_TO_FD004 ceiling is not just a consequence of FD004 being intrinsically hard; substantial transfer/few-shot headroom remains relative to a target oracle."
+  ],
+  "important_caveat": [
+    "The gap between the FD004 target oracle and FD001_TO_FD004 transfer results is not a pure domain-shift penalty, because full target supervision also removes the few-shot label bottleneck.",
+    "FD004 is intrinsically harder than FD001 under the current reproduced recipe, so cross-subset oracle differences should not be interpreted as direct backbone quality rankings across subsets."
+  ],
+  "next_useful_controls": [
+    "Add a target-only 5-shot-without-source initialization control on FD003 and FD004 to isolate transfer initialization benefit from label scarcity.",
+    "Compare target-only 5-shot against cross-domain 5-shot under the exact same target partition seeds before proposing new loss terms."
+  ]
+}

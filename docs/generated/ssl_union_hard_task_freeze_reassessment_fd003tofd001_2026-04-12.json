@@ -1,0 +1,165 @@
+{
+  "date": "2026-04-12",
+  "task": "FD003_TO_FD001",
+  "question": "does the canonical selective-freeze SSL stabilization generalize to the hard transfer direction, and can the worst hard-task SSL seed be rescued by milder adaptation changes?",
+  "reference_protocol": {
+    "shots": 5,
+    "val_units": 10,
+    "source_split_seed": 42,
+    "few_shot_seeds": [
+      42,
+      43,
+      44
+    ],
+    "ssl_preset": "paper_full",
+    "ssl_data": "source_train_union_target_train",
+    "target_lr": 0.0015,
+    "target_lr_scheduler": "cosine",
+    "target_lr_min": 1e-05,
+    "domain_feature_tap": "frontend_mean",
+    "lambda_mmd": 0.1,
+    "lambda_source_stage": 1.0,
+    "lambda_inv_mmd": 0.1,
+    "lambda_pseudo": 0.5,
+    "lambda_monotonic": 0.05,
+    "lambda_spec_domain": 0.0
+  },
+  "three_seed_reassessment": {
+    "candidate": {
+      "name": "spec_gate_transformer_head",
+      "description": "freeze the shared Mamba/invariant core and adapt the specific projections, gate projection, Transformer blocks, and head."
+    },
+    "per_seed": {
+      "42": {
+        "baseline_no_spec_adapted_rmse": 20.328915774344164,
+        "original_ssl_adapted_rmse": 19.972752178430184,
+        "selective_freeze_adapted_rmse": 20.248045422027968,
+        "delta_selective_minus_original_ssl": 0.27529324359778436,
+        "delta_selective_minus_baseline": -0.08087035231619565,
+        "ssl_best_epoch": 8,
+        "freeze_best_epoch": 1,
+        "ssl_best_gate_mean": 0.024352525708463538,
+        "freeze_best_gate_mean": 0.021029649578273173,
+        "ssl_best_pseudo_acceptance_ratio": 0.027181610197189236,
+        "freeze_best_pseudo_acceptance_ratio": 0.03317354831681011,
+        "ssl_best_inv_mmd_loss": 0.3518798884548041,
+        "freeze_best_inv_mmd_loss": 0.1310047129462502,
+        "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/fd003tofd001_ssl_spec_gate_transformer_head_seed42_20260412/FD003_TO_FD001/seed_42/result.json"
+      },
+      "43": {
+        "baseline_no_spec_adapted_rmse": 19.563954424734373,
+        "original_ssl_adapted_rmse": 19.465546926254,
+        "selective_freeze_adapted_rmse": 18.75223169805976,
+        "delta_selective_minus_original_ssl": -0.7133152281942415,
+        "delta_selective_minus_baseline": -0.8117227266746141,
+        "ssl_best_epoch": 10,
+        "freeze_best_epoch": 6,
+        "ssl_best_gate_mean": 0.0363984192891219,
+        "freeze_best_gate_mean": 0.058304227723485584,
+        "ssl_best_pseudo_acceptance_ratio": 0.11522296817859287,
+        "freeze_best_pseudo_acceptance_ratio": 0.30505976747994107,
+        "ssl_best_inv_mmd_loss": 0.4994383288736284,
+        "freeze_best_inv_mmd_loss": 0.2640282127381204,
+        "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/fd003tofd001_ssl_spec_gate_transformer_head_seed43_20260412/FD003_TO_FD001/seed_43/result.json"
+      },
+      "44": {
+        "baseline_no_spec_adapted_rmse": 20.861252069526742,
+        "original_ssl_adapted_rmse": 22.448668244346948,
+        "selective_freeze_adapted_rmse": 23.016835687893916,
+        "delta_selective_minus_original_ssl": 0.5681674435469676,
+        "delta_selective_minus_baseline": 2.1555836183671743,
+        "ssl_best_epoch": 2,
+        "freeze_best_epoch": 8,
+        "ssl_best_gate_mean": 0.06568264841444561,
+        "freeze_best_gate_mean": 0.06849035538058786,
+        "ssl_best_pseudo_acceptance_ratio": 0.02224039247751431,
+        "freeze_best_pseudo_acceptance_ratio": 0.04300899427636958,
+        "ssl_best_inv_mmd_loss": 0.43647218513093183,
+        "freeze_best_inv_mmd_loss": 0.37322079564088195,
+        "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/fd003tofd001_ssl_spec_gate_transformer_head_seed44_20260412/FD003_TO_FD001/seed_44/result.json"
+      }
+    },
+    "aggregate": {
+      "baseline_no_spec": {
+        "mean_adapted_rmse": 20.251374089535094,
+        "std_adapted_rmse": 0.6521156565044494
+      },
+      "original_ssl_full": {
+        "mean_adapted_rmse": 20.62898911634371,
+        "std_adapted_rmse": 1.5961636471949683
+      },
+      "selective_freeze_ssl": {
+        "mean_adapted_rmse": 20.672370935993882,
+        "std_adapted_rmse": 2.163735405237706
+      },
+      "delta_selective_minus_original_ssl": {
+        "mean_adapted_rmse": 0.04338181965017075,
+        "std_adapted_rmse": 0.5675717580427376
+      },
+      "delta_selective_minus_baseline_no_spec": {
+        "mean_adapted_rmse": 0.42099684645878743,
+        "std_adapted_rmse": 1.5116197487332566
+      },
+      "sign_test": {
+        "selective_better_than_original_ssl_seed_count": 1,
+        "selective_worse_than_original_ssl_seed_count": 2,
+        "selective_better_than_baseline_seed_count": 2,
+        "selective_worse_than_baseline_seed_count": 1
+      }
+    }
+  },
+  "seed44_targeted_probes": {
+    "original_ssl_full": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_nospec_fd003tofd001_20260409/FD003_TO_FD001/seed_44/result.json",
+      "adapted_rmse": 22.448668244346948,
+      "best_epoch": 2,
+      "best_val_rmse": 22.31173209442204,
+      "best_gate_mean": 0.06568264841444561,
+      "best_pseudo_acceptance_ratio": 0.02224039247751431,
+      "best_inv_mmd_loss": 0.43647218513093183
+    },
+    "lower_lr_full": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/fd003tofd001_ssl_full_lr5e4_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+      "adapted_rmse": 23.35937424347725,
+      "best_epoch": 2,
+      "best_val_rmse": 22.997509171764655,
+      "best_gate_mean": 0.06796998632857273,
+      "best_pseudo_acceptance_ratio": 0.03892068683565004,
+      "best_inv_mmd_loss": 0.4160668904858637
+    },
+    "transformer_head": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/fd003tofd001_ssl_transformer_head_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+      "adapted_rmse": 23.012150630184088,
+      "best_epoch": 8,
+      "best_val_rmse": 23.05814367241273,
+      "best_gate_mean": 0.07147979239405873,
+      "best_pseudo_acceptance_ratio": 0.04731534478059417,
+      "best_inv_mmd_loss": 0.37322079564088195
+    },
+    "spec_gate_transformer_head": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/fd003tofd001_ssl_spec_gate_transformer_head_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+      "adapted_rmse": 23.016835687893916,
+      "best_epoch": 8,
+      "best_val_rmse": 22.95608449200793,
+      "best_gate_mean": 0.06849035538058786,
+      "best_pseudo_acceptance_ratio": 0.04300899427636958,
+      "best_inv_mmd_loss": 0.37322079564088195
+    }
+  },
+  "evidence_supported_observations": [
+    "The canonical selective-freeze candidate does not generalize to the hard FD003_TO_FD001 transfer direction: its 3-seed mean is slightly worse than original SSL and clearly worse than the plain no-spec baseline.",
+    "Selective freezing still changes the hard-task dynamics materially rather than acting as a no-op: on all three seeds it lowers the best-epoch invariant-MMD loss relative to original SSL.",
+    "Lower invariant-MMD alone is not sufficient for better hard-task transfer: seed 44 reduces best-epoch inv-MMD from 0.4365 to 0.3732 under freezing but the test RMSE worsens from 22.4487 to 23.0168.",
+    "The hard-task best case is seed 43, where selective freezing simultaneously raises gate activity, raises pseudo acceptance, lowers invariant-MMD, and improves test RMSE from 19.4655 to 18.7522.",
+    "On the hard-task bad seed 44, neither lower-LR full adaptation nor lighter transformer/head-only adaptation rescues the SSL branch; both remain worse than the original SSL full run."
+  ],
+  "evidence_supported_conclusions": [
+    "Selective adaptation freezing should not be promoted as a new universal SSL default after the current evidence.",
+    "The adaptive-scope hypothesis is still real, but its useful regime is task-conditional rather than universal.",
+    "For FD003_TO_FD001 seed 44, the current rescue attempts show that milder updates and stronger freezing both fail, so this hard-task failure is not explained by a simple 'update too aggressively' story."
+  ],
+  "open_interpretation": [
+    "The hard task may require a different decision rule for when to preserve or update the shared invariant core, rather than a single freeze policy.",
+    "A next useful diagnostic would be to compare baseline vs SSL vs selective-freeze early-epoch feature statistics on FD003_TO_FD001 seed 43 and 44 under the same evaluation tap."
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "task": "FD003_TO_FD001",
+  "seed": 42,
+  "date": "2026-04-12",
+  "fixed_context": {
+    "source_split_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/splits/source_engine_split.json",
+    "target_partition_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/splits/target_few_shot_seed42.json",
+    "manual_adaptation_recipe": {
+      "inv_alignment_mode": "mmd",
+      "lambda_mmd": 0.1,
+      "lambda_inv_mmd": 0.1,
+      "lambda_pseudo": 0.5,
+      "lambda_monotonic": 0.05,
+      "domain_feature_tap": "frontend_mean",
+      "target_lr": 0.0015,
+      "target_lr_scheduler": "cosine",
+      "target_lr_min": 1e-05,
+      "target_epochs": 20,
+      "adaptation_seed": 42
+    },
+    "note": "Manual-control runs fix the adaptation recipe across checkpoints. They support relative comparison across source checkpoints, not exact reproduction of original end-to-end runs."
+  },
+  "checkpoint_results": [
+    {
+      "name": "baseline_frontendmean",
+      "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_baseline_frontendmean_seed42_20260412/FD003_TO_FD001/seed_42/result.json",
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/seed_42/source/best.pt",
+      "source_test_rmse": 15.888668465474511,
+      "target_direct_rmse": 30.636264975967283,
+      "adapted_rmse": 20.455129404183854,
+      "adapted_gain_vs_direct": 10.181135571783429,
+      "best_val_rmse": 23.688045118653736,
+      "best_epoch": 5,
+      "best_gate_mean": 0.14572063639097996,
+      "best_pseudo_acceptance_ratio": 0.024131168972654972
+    },
+    {
+      "name": "ssl_union_frontendmean",
+      "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_ssl_union_frontendmean_seed42_20260412/FD003_TO_FD001/seed_42/result.json",
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_nospec_fd003tofd001_20260409/FD003_TO_FD001/seed_42/source/best.pt",
+      "source_test_rmse": 15.704439068467918,
+      "target_direct_rmse": 24.07061671979232,
+      "adapted_rmse": 20.047250159116896,
+      "adapted_gain_vs_direct": 4.023366560675424,
+      "best_val_rmse": 22.729326036268727,
+      "best_epoch": 8,
+      "best_gate_mean": 0.025191496986309823,
+      "best_pseudo_acceptance_ratio": 0.16875476631441333
+    },
+    {
+      "name": "spd_best_frontendmean",
+      "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_spd_best_frontendmean_seed42_20260412/FD003_TO_FD001/seed_42/result.json",
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/spd_best_fd003_to_fd001/FD003_TO_FD001/seed_42/source/best.pt",
+      "source_test_rmse": 15.958087057782308,
+      "target_direct_rmse": 30.481745270604343,
+      "adapted_rmse": 20.48210868844056,
+      "adapted_gain_vs_direct": 9.999636582163781,
+      "best_val_rmse": 23.765502165861204,
+      "best_epoch": 5,
+      "best_gate_mean": 0.14575104598407726,
+      "best_pseudo_acceptance_ratio": 0.03186621636343828
+    },
+    {
+      "name": "spd_highlr_frontendmean",
+      "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_spd_highlr_frontendmean_seed42_20260412/FD003_TO_FD001/seed_42/result.json",
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/spd_highlr_frontend_multitask/FD003_TO_FD001/seed_42/source/best.pt",
+      "source_test_rmse": 15.85760889908607,
+      "target_direct_rmse": 30.623329758224457,
+      "adapted_rmse": 20.184360844397762,
+      "adapted_gain_vs_direct": 10.438968913826695,
+      "best_val_rmse": 23.827915238500818,
+      "best_epoch": 5,
+      "best_gate_mean": 0.1419877032331017,
+      "best_pseudo_acceptance_ratio": 0.03894759777753568
+    }
+  ],
+  "aggregate": {
+    "pearson_source_test_vs_adapted": 0.9073244438722867,
+    "pearson_target_direct_vs_adapted": 0.7649275487168578
+  },
+  "evidence_supported_conclusions": [
+    "On seed 42, the SSL source checkpoint is best on source test, target direct, and adapted RMSE within this fixed-control setup.",
+    "The non-SSL checkpoints have very similar adapted RMSE despite much worse direct RMSE, which shows adaptation compresses part of the source-checkpoint gap on this seed.",
+    "A better source checkpoint can help, but the transferred gain is much smaller than the raw direct-gap magnitude."
+  ],
+  "open_interpretation": [
+    "This seed does not support a simple linear story between direct RMSE and adapted RMSE because three checkpoints cluster tightly after adaptation.",
+    "The SSL benefit here may still involve target-stage dynamics beyond the source checkpoint alone; the gain shrinks from about 6.57 RMSE in direct transfer to about 0.41 RMSE after adaptation."
+  ]
+}

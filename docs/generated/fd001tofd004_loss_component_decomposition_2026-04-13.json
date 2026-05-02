@@ -1,0 +1,100 @@
+{
+  "date": "2026-04-13",
+  "task": "FD001_TO_FD004",
+  "purpose": "isolate which maintained unlabeled/domain-adaptation loss components are responsible for the slight regression of the stable v2 CD pipeline relative to source-initialized supervised finetuning",
+  "matched_reference_run_root": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_bestcfg_fd001_to_fd004_5seeds_fixcond/FD001_TO_FD004",
+  "matched_source_init_control_root": "/home/shelterpl/cd_mambatt/runs/target_only_fewshot_controls/fd001tofd004_sourceinit5shot_matchv2_20260413/FD001_TO_FD004",
+  "protocol": {
+    "seeds": [
+      42,
+      43,
+      44,
+      45,
+      46
+    ],
+    "reuse_source_checkpoints": true,
+    "reuse_target_partitions": true,
+    "mamba_block_mode": "bare",
+    "transformer_norm_mode": "pre",
+    "target_lr": 0.0005,
+    "target_epochs": 20,
+    "target_lr_scheduler": "none"
+  },
+  "reference_means": {
+    "source_init_only_rmse": 23.86262891677749,
+    "full_cd_rmse": 24.344873332179727,
+    "mmd_only_rmse": 24.20646691947415,
+    "source_stage_only_rmse": 24.19423756187733,
+    "pseudo_only_rmse": 24.08962576289961,
+    "monotonic_only_rmse": 24.062775812924425,
+    "source_stage_plus_pseudo_rmse": 24.196740486968803
+  },
+  "delta_vs_source_init": {
+    "full_cd": 0.4822444154022378,
+    "mmd_only": 0.343838002696657,
+    "source_stage_only": 0.3316086450998377,
+    "pseudo_only": 0.22699684612212181,
+    "monotonic_only": 0.20014689614693565,
+    "source_stage_plus_pseudo": 0.33411157019131393
+  },
+  "per_seed_rmse": {
+    "source_init": {
+      "42": 21.80680661358751,
+      "43": 27.195586855275273,
+      "44": 21.453686556429282,
+      "45": 22.811211087409227,
+      "46": 26.04585347118616
+    },
+    "full_cd": {
+      "42": 22.700652498859025,
+      "43": 27.83099431075262,
+      "44": 21.27986692776775,
+      "45": 23.27420864318027,
+      "46": 26.63864428033898
+    },
+    "mmd_only": {
+      "42": 22.10045459165547,
+      "43": 28.01383778445428,
+      "44": 21.031891454547182,
+      "45": 23.260996330181708,
+      "46": 26.625154436532096
+    },
+    "source_stage_only": {
+      "42": 22.104924681560608,
+      "43": 27.970294352537746,
+      "44": 21.024452882849396,
+      "45": 23.25640521887854,
+      "46": 26.615110673560352
+    },
+    "pseudo_only": {
+      "42": 22.101262717910426,
+      "43": 27.953730650110124,
+      "44": 21.029137237198082,
+      "45": 23.209215794110147,
+      "46": 26.154782415169283
+    },
+    "monotonic_only": {
+      "42": 22.51752369391105,
+      "43": 27.78719896387095,
+      "44": 20.997771825603493,
+      "45": 22.678177105819774,
+      "46": 26.333207475416867
+    },
+    "source_stage_plus_pseudo": {
+      "42": 22.11068849812922,
+      "43": 28.002067236500167,
+      "44": 21.02880818678875,
+      "45": 23.21867190499253,
+      "46": 26.623466608433354
+    }
+  },
+  "evidence_supported_conclusions": [
+    "No isolated maintained loss component improves the 5-seed mean over simple source-initialized supervised finetuning on FD001_TO_FD004.",
+    "Among the tested single components, monotonic-only and pseudo-only are the least harmful on the mean, while MMD-only and source-stage-only are slightly more harmful.",
+    "Adding source-stage supervision back on top of pseudo does not recover the gap, so pseudo-only underperformance is not explained mainly by the absence of a supervised stage head.",
+    "The seed ordering is highly stable across all variants: seed 44 remains the easiest and seed 43 remains the hardest, which indicates the current loss family mostly shifts the same partition difficulty landscape instead of changing it.",
+    "Relative to source-init-only, the full current CD pipeline helps only seed 44 and hurts seeds 42, 43, 45, and 46 in this matched FD001_TO_FD004 comparison.",
+    "A narrower supported interpretation is that the current FD001_TO_FD004 regression is not caused by one catastrophic auxiliary term alone; it is a distributed small-regression pattern across the present loss family, with task/partition sensitivity still dominating."
+  ],
+  "important_caveat": "These controls are matched to the stable bare/pre v2 FD001_TO_FD004 line; they isolate maintained loss components within that branch rather than proving the same ranking for all architectures."
+}

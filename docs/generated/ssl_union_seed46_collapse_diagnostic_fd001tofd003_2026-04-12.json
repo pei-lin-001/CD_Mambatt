@@ -1,0 +1,114 @@
+{
+  "date": "2026-04-12",
+  "task": "FD001_TO_FD003",
+  "seed": 46,
+  "question": "why did union SSL regress badly on the new canonical-task seed 46?",
+  "protocol_check": {
+    "same_target_partition_path": true,
+    "baseline_target_partition_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/splits/target_few_shot_seed46.json",
+    "ssl_target_partition_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/splits/target_few_shot_seed46.json",
+    "same_source_split_path": true,
+    "baseline_source_split_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/splits/source_engine_split.json",
+    "ssl_source_split_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/splits/source_engine_split.json",
+    "same_domain_feature_tap": true,
+    "baseline_domain_feature_tap": "frontend_mean",
+    "ssl_domain_feature_tap": "frontend_mean",
+    "same_target_lr": true,
+    "baseline_target_lr": 0.0015,
+    "ssl_target_lr": 0.0015
+  },
+  "result_level_comparison": {
+    "baseline": {
+      "source_rmse": 17.117388689233024,
+      "direct_target_rmse": 46.42069876405473,
+      "adapted_rmse": 18.45576385138894,
+      "source_best_epoch": 15,
+      "source_best_val_rmse": 14.98226863681948,
+      "cd_best_epoch": 1,
+      "cd_best_val_rmse": 22.246393197594447,
+      "cd_best_pseudo_acceptance_ratio": 0.033216783216783216,
+      "cd_best_gate_mean": 0.13370653007763414,
+      "cd_best_inv_mmd_loss": 0.7199010429753133
+    },
+    "ssl": {
+      "source_rmse": 17.71930589395649,
+      "direct_target_rmse": 41.814614282081,
+      "adapted_rmse": 26.425029659253177,
+      "source_best_epoch": 12,
+      "source_best_val_rmse": 15.743750272620598,
+      "ssl_pretrain_best_epoch": 19,
+      "ssl_pretrain_best_loss": 0.010856026044406315,
+      "cd_best_epoch": 1,
+      "cd_best_val_rmse": 28.06834150041265,
+      "cd_best_pseudo_acceptance_ratio": 0.014034576534576534,
+      "cd_best_gate_mean": 0.04399184655737616,
+      "cd_best_inv_mmd_loss": 0.8239308362569149
+    },
+    "delta_ssl_minus_baseline": {
+      "source_rmse": 0.6019172047234669,
+      "direct_target_rmse": -4.606084481973724,
+      "adapted_rmse": 7.969265807864236,
+      "cd_best_val_rmse": 5.821948302818203
+    }
+  },
+  "cd_dynamics": {
+    "baseline": {
+      "epochs": 20,
+      "best_epoch_by_val": 1,
+      "epoch1": {
+        "val_rmse": 22.246393197594447,
+        "train_target_loss": 563.6567886193092,
+        "train_source_loss": 562.0772309246967,
+        "train_mmd_loss": 0.33882735188937274,
+        "train_inv_mmd_loss": 0.7199010429753133,
+        "pseudo_acceptance_ratio": 0.033216783216783216,
+        "gate_mean": 0.13370653007763414
+      },
+      "epoch20": {
+        "val_rmse": 29.74367732022602,
+        "train_target_loss": 404.78587860663635,
+        "train_source_loss": 416.57939600558643,
+        "train_mmd_loss": 0.2901607175122489,
+        "train_inv_mmd_loss": 0.6088322279085365,
+        "pseudo_acceptance_ratio": 0.6400058275058275,
+        "gate_mean": 0.23916422433291143
+      },
+      "best_val_rmse": 22.246393197594447,
+      "worst_val_rmse": 30.531005552982087
+    },
+    "ssl": {
+      "epochs": 20,
+      "best_epoch_by_val": 1,
+      "epoch1": {
+        "val_rmse": 28.06834150041265,
+        "train_target_loss": 575.7671815017941,
+        "train_source_loss": 555.5136600209789,
+        "train_mmd_loss": 0.343619532112942,
+        "train_inv_mmd_loss": 0.8239308362569149,
+        "pseudo_acceptance_ratio": 0.014034576534576534,
+        "gate_mean": 0.04399184655737616
+      },
+      "epoch20": {
+        "val_rmse": 29.955494220816792,
+        "train_target_loss": 407.3286358724156,
+        "train_source_loss": 417.77439773355627,
+        "train_mmd_loss": 0.202543981964649,
+        "train_inv_mmd_loss": 0.7359940844520764,
+        "pseudo_acceptance_ratio": 0.6186383061383062,
+        "gate_mean": 0.07381712777139494
+      },
+      "best_val_rmse": 28.06834150041265,
+      "worst_val_rmse": 30.32448224430984
+    }
+  },
+  "evidence_supported_observations": [
+    "SSL seed 46 improved direct-transfer RMSE versus baseline, so the pretrained encoder was not completely unusable before adaptation.",
+    "The regression appears immediately in adaptation: best validation RMSE is already worse at epoch 1 under SSL and never recovers later.",
+    "SSL seed 46 keeps the gate much smaller than baseline throughout adaptation while also carrying higher invariant-MMD loss, so the invariant path is not becoming easier to align on this seed.",
+    "Pseudo acceptance starts lower under SSL seed 46 and only rises later, but later epochs also have worse validation RMSE, so the failure is not explained by late pseudo-label overuse alone."
+  ],
+  "speculation_to_test_next": [
+    "The most plausible current explanation is that SSL changed the adaptation initialization into a regime with weaker early supervised fit on the target few-shot set for this split.",
+    "A minimal next test is to compare epoch-1 target predictions or few-shot train RMSE between baseline and SSL seed 46, rather than adding another loss term."
+  ]
+}

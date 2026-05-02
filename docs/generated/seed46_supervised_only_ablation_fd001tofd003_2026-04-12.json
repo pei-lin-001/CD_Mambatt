@@ -1,0 +1,64 @@
+{
+  "date": "2026-04-12",
+  "task": "FD001_TO_FD003",
+  "seed": 46,
+  "question": "does disabling unlabeled adaptation losses rescue the SSL collapse on seed46?",
+  "runs": {
+    "baseline_full_objective": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/seed_46/result.json",
+      "adapted_rmse": 18.45576385138894,
+      "best_val_rmse": 22.246393197594447,
+      "best_epoch": 1,
+      "target_direct_rmse": 46.42069876405473
+    },
+    "ssl_full_objective": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/seed_46/result.json",
+      "adapted_rmse": 26.425029659253177,
+      "best_val_rmse": 28.06834150041265,
+      "best_epoch": 1,
+      "target_direct_rmse": 41.814614282081
+    },
+    "baseline_supervised_only_probe": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed46_baseline_supervised_only_probe_20260412/FD001_TO_FD003/seed_46/result.json",
+      "adapted_rmse": 19.074732301816276,
+      "best_val_rmse": 25.530565352941235,
+      "best_epoch": 2
+    },
+    "ssl_supervised_only_probe": {
+      "result_path": "/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed46_ssl_supervised_only_probe_20260412/FD001_TO_FD003/seed_46/result.json",
+      "adapted_rmse": 24.85071955039569,
+      "best_val_rmse": 27.24038675609402,
+      "best_epoch": 2
+    }
+  },
+  "epoch1_fewshot_fit_probe": {
+    "result_path": "/home/shelterpl/cd_mambatt/docs/generated/ssl_union_seed46_epoch1_fewshot_fit_probe_2026-04-12.json",
+    "source_init_ssl_minus_baseline_fewshot_rmse": -4.988641686884996,
+    "epoch1_cd_ssl_minus_baseline_fewshot_rmse": -0.27651047407173124,
+    "epoch1_cd_ssl_minus_baseline_val_rmse": 5.821948302818203,
+    "epoch1_cd_ssl_minus_baseline_test_rmse": 7.969265807864236
+  },
+  "comparisons": {
+    "baseline_supervised_only_minus_full": {
+      "adapted_rmse": 0.6189684504273352,
+      "best_val_rmse": 3.2841721553467877
+    },
+    "ssl_supervised_only_minus_full": {
+      "adapted_rmse": -1.5743101088574853,
+      "best_val_rmse": -0.8279547443186317
+    },
+    "ssl_minus_baseline_under_supervised_only": {
+      "adapted_rmse": 5.7759872485794155,
+      "best_val_rmse": 1.7098214031527839
+    },
+    "gap_reduction_when_dropping_unlabeled_losses": {
+      "adapted_rmse_gap": -2.1932785592848205
+    }
+  },
+  "evidence_supported_observations": [
+    "Removing unlabeled losses improves the SSL seed46 test RMSE from 26.43 to 24.85, so the full unlabeled objective contributes to the collapse.",
+    "Removing unlabeled losses slightly worsens the baseline seed46 test RMSE from 18.46 to 19.07, so the same losses are mildly helpful on the non-SSL branch.",
+    "Even under supervised-only adaptation, SSL seed46 remains much worse than baseline seed46 (24.85 vs 19.07), so the failure is not explained solely by the unlabeled loss terms.",
+    "The earlier few-shot-fit probe showed SSL is not worse on the labeled target windows at epoch 1, which rules out the simple explanation that SSL starts from a poorer supervised target fit."
+  ]
+}

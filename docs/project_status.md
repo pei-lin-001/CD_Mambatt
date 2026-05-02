@@ -1,6 +1,6 @@
 # CD-MambAtt Project Status
 
-Last updated: `2026-04-09`
+Last updated: `2026-04-13`
 
 ## 1. Current phase
 
@@ -19,13 +19,63 @@ Current status in one paragraph:
 > branch is now implemented and runnable on CUDA. A paper-style same-subset
 > **self-supervised MambAtt pipeline is also now implemented**, with FD001 nearly
 > matching the paper's one-shot SSL number, although the four-subset match is
-> incomplete and that line is currently paused. The latest cross-domain finding is
-> that **source-train + target-train union SSL pretraining, followed by
-> `lambda_spec_domain=0` adaptation, is now the best verified `FD001→FD003`
-> configuration**, outperforming both the previous SPD best line and the plain
-> no-spec baseline. Mechanism checks suggest the gain comes mainly from
-> **stabilizing Mamba state drift and strengthening the invariant path**, not from
-> activating the SPD specific branch.
+> incomplete and that line is currently paused. The `2026-04-09` union-SSL
+> `FD001→FD003` result was a real positive **3-seed** signal, but the
+> `2026-04-12` extension to `5` seeds changed the aggregate picture:
+> plain no-spec measures **20.89 ± 2.28**, while union SSL full adaptation measures
+> **21.83 ± 3.11**, so robust superiority is **not** supported in its original form.
+> Direct diagnostics on the failing `seed 46` show that SSL still improves direct
+> transfer there, but enters adaptation in a worse regime from epoch `1`, with
+> smaller gate values and higher invariant-MMD throughout the run. Follow-up probes
+> then showed two additional facts: SSL is **not** worse on the few-shot labeled
+> target windows at epoch `1`, and removing unlabeled adaptation losses only
+> **partially** rescues the bad seed (`26.43 → 24.85`, still above the baseline
+> probe `19.07`). A later selective-freeze sweep established a more concrete
+> stabilization result: keeping the shared Mamba core frozen while adapting the
+> spec/gate branch plus Transformer/head reduces the union-SSL `5`-seed mean from
+> **21.83 ± 3.11** to **20.90 ± 2.03**. That nearly ties the plain no-spec mean
+> (**20.89 ± 2.28**) and materially lowers variance, but it still does **not**
+> create a new canonical best. That means the immediate research focus should remain
+> **adaptation-dynamics diagnosis / stabilization**, not adding more loss terms. As
+> of `2026-04-12`, the maintained `train_cd_mambatt_v3.py` objective has also been
+> consolidated to the verified loss core; contrastive, GRL/domain-adversarial, and
+> semantic-SPD auxiliary loss branches are archived rather than kept in the main
+> training path. A fresh hard-task validation on `FD003→FD001` then sharpened the
+> SSL conclusion further: the canonical selective-freeze candidate
+> (`spec_gate_transformer_head`) does **not** generalize as a new default, with a
+> `3`-seed mean of **20.67 ± 2.16** versus **20.63 ± 1.60** for original SSL and
+> **20.25 ± 0.65** for the plain no-spec baseline. Additional `seed 44` rescue
+> probes showed that neither lower-LR full adaptation nor lighter
+> `transformer_head` adaptation fixes that hard-task failure. The immediate focus
+> should therefore be **task-conditional adaptation dynamics diagnosis** and the
+> longer-standing **source-backbone gap**, not broader rollout of the current
+> freeze policy. The supervision-side decomposition also moved forward on
+> `2026-04-13`: target-domain oracle controls now exist on both `FD003` and
+> `FD004` under the current best reproduced MambAtt recipe. Those controls show
+> that full target supervision reaches **14.11 ± 0.19** on `FD003` and
+> **16.45 ± 0.01** on `FD004`, both still far below the corresponding current
+> cross-domain few-shot transfer lines. That means the source-backbone gap is a
+> real issue, but it is **not sufficient** to explain the whole transfer ceiling;
+> there is still a large few-shot / adaptation headroom gap relative to target
+> oracles. That follow-up control has now also been refined into a three-way
+> decomposition. On `FD001→FD003`, matched target-only `5-shot` scratch is
+> **22.47 ± 0.57**, source-init-only supervised finetune is
+> **21.94 ± 0.75**, and the full current no-spec CD pipeline is
+> **20.62 ± 1.18**. On `FD001→FD004`, the corresponding numbers are
+> **24.76 ± 1.77**, **23.86 ± 2.32**, and **24.34 ± 2.48**. So source
+> initialization helps on both tasks, but the extra unlabeled/domain-adaptation
+> machinery is **task-dependent**:
+> it helps on `FD003`, while slightly hurting on `FD004`. The next controlled
+> comparison should therefore be **why the same adaptation objective helps one
+> task and hurts another**, not another new auxiliary loss. A first loss-level
+> decomposition on `FD001→FD004` now sharpens that further: none of the
+> maintained individual terms (`MMD`, source-stage, pseudo, monotonic) beats
+> simple source-init-only supervised finetuning on the `5`-seed mean, and
+> `source-stage + pseudo` also fails to recover the gap. The seed ordering is
+> almost unchanged across all variants, which supports a narrower conclusion:
+> the current `FD001→FD004` regression is not one obviously broken loss term,
+> but a distributed small-regression pattern on top of the same
+> task/partition-difficulty structure.
 
 ## 2. What is already completed
 
@@ -69,6 +119,21 @@ Conclusion:
 - the supervised backbone is **structurally reproduced**
 - the numerical gap to the paper is **still open**
 - remaining mismatch is more likely hidden protocol / unpublished implementation detail than a missing top-level module
+- a new target-domain full-supervised control on `FD003` now adds an
+  important boundary condition:
+  - with the current local best supervised recipe, `FD003` itself reaches
+    **14.11 ± 0.19** (`3` seeds, fixed split)
+  - this is still far below current `FD001→FD003` cross-domain few-shot
+    results
+  - therefore the canonical transfer ceiling is **not explained only** by the
+    source supervised reproduction gap; there is also substantial
+    cross-domain/few-shot headroom remaining relative to a target oracle
+- the same target-oracle control is now also available on `FD004`:
+  - with the same recipe, `FD004` reaches **16.45 ± 0.01** (`3` seeds, fixed split)
+  - this remains well below current `FD001→FD004` cross-domain few-shot
+    references (`24.34` stable v2 `5`-seed, `23.72` SPD high-LR `3`-seed)
+  - therefore the harder multi-condition target still shows large remaining
+    transfer/few-shot headroom relative to a target oracle
 
 ### 3.2 Cross-domain `CD-MambAtt v2` (`5-shot`)
 
@@ -121,8 +186,9 @@ matched protocol (resample + val-all-windows)
 - per-seed: 42=21.04, 43=19.99, 44=20.09
 - v2 reference: 21.13 ± 1.59
 - **improvement: -0.76 mean, -70% variance**
-- this remains the strongest **non-SSL SPD baseline**, but is no longer the
-  overall best canonical FD001→FD003 result after the union-SSL update below
+- this remains the strongest **non-SSL SPD baseline**
+- a later `3`-seed union-SSL result beat it, but the subsequent `5`-seed
+  reassessment no longer supports a robust default switch to union SSL
 
 #### Multi-task validation (3 seeds each):
 
@@ -141,7 +207,7 @@ matched protocol (resample + val-all-windows)
 - Spec domain-predictive loss was the most effective auxiliary loss
 - Higher LR (2e-3 + cosine) was orthogonal to SPD and they stack
 
-### 3.5 Cross-domain union SSL + no-spec adaptation (current best on FD001→FD003)
+### 3.5 Cross-domain union SSL + no-spec adaptation (3-seed signal, 5-seed reassessment, selective-freeze follow-up)
 
 Configuration:
 
@@ -153,7 +219,7 @@ Configuration:
   - cosine scheduler
   - `domain_feature_tap = frontend_mean`
 
-Result (`FD001→FD003`, seeds `42,43,44`):
+Initial matched result (`FD001→FD003`, seeds `42,43,44`):
 
 | Seed | Baseline no-spec | SSL + no-spec | Delta |
 |---|---:|---:|---:|
@@ -179,16 +245,15 @@ Additional observations:
   - SSL + no-spec: **16.6510**
   - delta: **+0.8142**
 
-Interpretation:
+Initial interpretation from the `3`-seed read:
 
-- the current best verified canonical path is now:
-  - **union SSL pretrain + no-spec adaptation**
-- this improves target-domain generalization even though source-domain fitting
-  becomes slightly worse
-- the gain pattern matches the actual cross-domain objective better than pure
+- union SSL + no-spec looked like the strongest canonical `FD001→FD003` path
+- this improved target-domain generalization even though source-domain fitting
+  became slightly worse
+- the gain pattern matched the actual cross-domain objective better than pure
   source fitting
 
-Mechanism snapshot (seed `43`):
+Positive-case mechanism snapshot (seed `43`):
 
 - `x_conv` MMD: **0.286 → 0.213**
 - combined-core MMD: **0.638 → 0.181**
@@ -197,17 +262,105 @@ Mechanism snapshot (seed `43`):
 - target gate mean: **0.119 → 0.058**
 - target `inv_only` ablation RMSE: **19.80 → 18.03**
 
-Mechanism conclusion:
+Positive-case mechanism conclusion:
 
 - the improvement does **not** mainly come from opening the specific branch
 - instead, the strongest evidence is that union SSL **stabilizes the Mamba state
   dynamics** and makes the **invariant path** substantially stronger
 
+`5`-seed reassessment (`42,43,44,45,46`):
+
+| Aggregate | Baseline no-spec | SSL + no-spec | Delta |
+|---|---:|---:|---:|
+| mean adapted RMSE | **20.8917 ± 2.2820** | **21.8293 ± 3.1084** | **+0.9376** |
+| mean direct target RMSE | 43.3926 | **39.3195** | **-4.0731** |
+| mean source RMSE | **16.1985** | 16.6621 | +0.4637 |
+
+Added seeds:
+
+| Seed | Baseline no-spec | SSL + no-spec | Delta |
+|---:|---:|---:|---:|
+| 45 | 24.1368 | 23.1767 | -0.9601 |
+| 46 | **18.4558** | 26.4250 | **+7.9693** |
+
+Updated interpretation after the `5`-seed extension:
+
+- the earlier `3`-seed signal was real, but it is **not robust enough** to
+  support “union SSL + no-spec is the current best canonical default”
+- SSL still helps direct transfer on average and helps `4 / 5` seeds in adapted
+  RMSE, so the encoder-side signal is not fake
+- however, one severe adaptation collapse (`seed 46`) is enough to reverse the
+  mean and substantially increase variance
+- follow-up seed-46 probes show:
+  - SSL is **not** worse on the few-shot labeled target set at epoch `1`
+  - removing unlabeled losses helps SSL on that seed
+  - but does **not** close the gap to the baseline
+- the current evidence therefore supports:
+  - union SSL is a **promising but unstable** direction
+  - the immediate next step is to diagnose early adaptation behavior on bad
+    seeds rather than add new losses
+
+Selective-freeze stabilization follow-up (`spec_gate_transformer_head`):
+
+| Aggregate | Baseline no-spec | Original SSL full | Selective-freeze SSL |
+|---|---:|---:|---:|
+| mean adapted RMSE | **20.8917 ± 2.2820** | 21.8293 ± 3.1084 | 20.8995 ± 2.0281 |
+
+Per-seed sign count:
+
+- vs original SSL full:
+  - better on **4 / 5** seeds
+  - worse on **1 / 5** seed
+- vs baseline no-spec:
+  - better on **3 / 5** seeds
+  - worse on **2 / 5** seeds
+
+Interpretation:
+
+- this is the first tested stabilization mechanism that materially repairs the
+  original union-SSL variance problem
+- the gain does **not** come from adding more losses; it comes from changing
+  the **trainable scope during adaptation**
+- the line is still **not a new default best**, because its `5`-seed mean is
+  effectively tied with baseline no-spec rather than better
+- the main positive claim is therefore narrower:
+  - **adaptation scope / dynamics are a real bottleneck for SSL**
+  - and selective freezing of the shared Mamba core is a credible lever
+
+Hard-task transfer-direction check (`FD003→FD001`, seeds `42,43,44`):
+
+| Aggregate | Baseline no-spec | Original SSL full | Selective-freeze SSL |
+|---|---:|---:|---:|
+| mean adapted RMSE | **20.2514 ± 0.6521** | 20.6290 ± 1.5962 | 20.6724 ± 2.1637 |
+
+Hard-task interpretation:
+
+- the canonical selective-freeze candidate does **not** generalize to this
+  direction as a new default
+- the freeze still changes behavior materially:
+  - it lowers best-epoch invariant-MMD on all three seeds
+- but lower invariant-MMD is **not sufficient** for better hard-task transfer:
+  - `seed 44` still worsens from **22.4487 → 23.0168**
+- targeted `seed 44` rescue probes then showed:
+  - lower-LR full adaptation: **23.3594**
+  - `transformer_head`: **23.0122**
+  - `spec_gate_transformer_head`: **23.0168**
+- this means the current hard-task failure is **not** explained by a simple
+  “update too aggressively” story
+- the supported conclusion is narrower:
+  - selective freezing is a **task-conditional** stabilization mechanism
+  - not a generally correct SSL replacement policy
+
 Primary records:
 
 - experiment log: [`cross_domain_experiment_log.md`](./cross_domain_experiment_log.md)
-- generated summary:
-  [`generated/ssl_union_nospec_frontend_summary_2026-04-09.json`](./generated/ssl_union_nospec_frontend_summary_2026-04-09.json)
+- generated summaries:
+  - [`generated/ssl_union_nospec_frontend_summary_2026-04-09.json`](./generated/ssl_union_nospec_frontend_summary_2026-04-09.json)
+  - [`generated/ssl_union_nospec_frontend_5seed_reassessment_2026-04-12.json`](./generated/ssl_union_nospec_frontend_5seed_reassessment_2026-04-12.json)
+  - [`generated/ssl_union_seed46_collapse_diagnostic_fd001tofd003_2026-04-12.json`](./generated/ssl_union_seed46_collapse_diagnostic_fd001tofd003_2026-04-12.json)
+  - [`generated/ssl_union_seed46_epoch1_fewshot_fit_probe_2026-04-12.json`](./generated/ssl_union_seed46_epoch1_fewshot_fit_probe_2026-04-12.json)
+  - [`generated/seed46_supervised_only_ablation_fd001tofd003_2026-04-12.json`](./generated/seed46_supervised_only_ablation_fd001tofd003_2026-04-12.json)
+  - [`generated/ssl_union_hard_task_freeze_reassessment_fd003tofd001_2026-04-12.json`](./generated/ssl_union_hard_task_freeze_reassessment_fd003tofd001_2026-04-12.json)
 
 ### 3.6 Semantic-SPD v1/v2 status (SUPERSEDED)
 
@@ -249,7 +402,12 @@ Interpretation:
 - therefore, the next semantic-SPD iteration should keep the novelty direction
   but adopt a **softer decomposition protocol**
 
-### 3.7 Shared-aux semantic-SPD + source semantic warmup
+### 3.7 Shared-aux semantic-SPD + source semantic warmup (ARCHIVED)
+
+> Historical branch only. As of `2026-04-12`, the semantic warmup and related
+> auxiliary semantic losses are no longer part of the maintained v3 main path,
+> because Sections `11.21` to `11.28` never beat the simpler inv-MMD core
+> objective.
 
 New code state:
 
@@ -309,7 +467,38 @@ Current judgment:
 - FD003/FD004 remain off-paper
 - therefore this branch is being **recorded and paused**, rather than pushed further right now
 
-### 3.7 Task-Embedding MAML paper-aligned probe (`FD001→FD003`, `K=1`)
+### 3.9 Loss-function consolidation status (2026-04-12)
+
+Maintained `v3` adaptation objective:
+
+- source supervised regression
+- target few-shot regression
+- global MMD (`lambda_mmd`)
+- source stage CE (`lambda_source_stage`)
+- target pseudo-stage CE (`lambda_pseudo`)
+- local monotonicity (`lambda_monotonic`)
+- optional invariant-path MMD (`lambda_inv_mmd`)
+- optional specific-branch domain CE (`lambda_spec_domain`)
+- optional Transformer adapter L2 penalty when that branch is enabled
+
+Retired from the maintained main path:
+
+- cross-domain contrastive
+- GRL / domain-adversarial alignment
+- conditional semantic-SPD losses
+- inv/spec orthogonality and related residual / reconstruction auxiliaries
+- semantic warmup
+
+Why this is evidence-supported:
+
+- contrastive stayed neutral or negative in Sections `3.5`, `3.6`, and `3.10`
+- direct inv-MMD beat GRL in Sections `11.12` to `11.15`
+- the semantic-SPD auxiliary line in Sections `11.21` to `11.28` never beat
+  the inv-MMD core reference
+- the current best verified path in Sections `13.11` to `13.13` does not rely
+  on the retired loss family
+
+### 3.10 Task-Embedding MAML paper-aligned probe (`FD001→FD003`, `K=1`)
 
 To check whether our current method can remain competitive under the
 **Task-Embedding MAML** paper's much harsher `1-shot` regime, we added:
@@ -359,17 +548,36 @@ Primary note:
 - `DD-SSM / SPD v0` is implemented inside the Mamba path and validated on CUDA
 - **SPD v0 + inv-MMD beats v2 on both mean RMSE and cross-seed stability** on the canonical `FD001 -> FD003` task (3 seeds, matched protocol)
 - **SPD provides a net -0.91 RMSE improvement** over v3+bare under the same protocol
-- **cross-domain union SSL + no-spec adaptation is now the best verified
-  FD001→FD003 configuration** (`19.85` mean RMSE across seeds `42,43,44`)
 - mechanism evidence now supports a more specific claim:
   **union SSL mainly strengthens the invariant path and reduces Mamba state drift**
+- the strongest verified SSL stabilization lever so far is
+  **selective freezing of the shared Mamba core while keeping the
+  spec/gate + Transformer/head path trainable**
+- that selective-freeze line improves the original union-SSL `5`-seed mean
+  from **21.83 ± 3.11** to **20.90 ± 2.03**, but only **ties** the plain
+  no-spec mean rather than beating it
+- a new hard-task validation now rules out the strong generalization claim:
+  the same selective-freeze policy is **not** a robust default on
+  `FD003→FD001`
+- matched target-only few-shot controls now exist on both `FD001→FD003` and
+  `FD001→FD004`
+- those controls show two things simultaneously:
+  - target 5-shot labels alone already explain a large part of the gain over
+    direct transfer
+  - source initialization still provides an extra gain, but the effect size is
+    modest and the extra unlabeled/domain-adaptation branch is now known to be
+    task-dependent rather than uniformly helpful
 
 ### Cannot claim yet
 
 - exact author-level reproduction of the target paper supervised number
 - strict publication-grade apples-to-apples superiority over `FOMLN`
 - cross-domain union SSL superiority across **multiple tasks** (currently only verified on FD001→FD003)
-- new best SSL-enhanced line superiority at 5-seed scale (only 3 seeds so far)
+- new best SSL-enhanced line superiority at `5`-seed scale
+- a generally correct rule for when selective freezing should replace plain
+  full adaptation
+- a simple “lower LR or more freezing will rescue hard-task SSL failures”
+  explanation
 
 ## 5. Current bottlenecks
 
@@ -377,23 +585,24 @@ Primary note:
 2. ~~SPD innovation depth insufficient~~ → SPD is now the main innovation
 3. ~~GRL unstable~~ → replaced with inv-MMD + spec-domain-predictive
 4. ~~protocol mismatch~~ → resolved (v3 defaults fixed)
-5. **union SSL + no-spec is only verified on FD001→FD003** — need to test transfer-direction robustness, especially FD003→FD001
+5. **selective freezing is now known to be task-conditional rather than universal** — we still do not know when it should be enabled, and the current hard-task evidence is negative
 6. **SPD disentanglement effect is still weak** (gate barely moves; current best result does not rely on a strong spec branch)
-7. **only 3 seeds tested** on the new best SSL line — need 5 seeds for stronger confidence
-8. `FOMLN` comparison not yet refreshed against the new SSL-enhanced line
-9. second dataset (XJTU-SY) not yet started
-10. no matched-protocol ablation yet isolating **union SSL vs no union SSL** on multiple tasks
+7. **most of the remaining headroom is now known not to come from source initialization alone** — and the current unlabeled/domain-adaptation machinery is now known to help `FD001→FD003` but slightly hurt `FD001→FD004`
+8. **the current `FD001→FD004` loss family does not contain an obvious single fix** — matched component controls show no maintained individual term beats source-init-only on the `5`-seed mean, so the next diagnosis should focus more on partition sensitivity / representation quality than on another minor loss reweighting
+9. `FOMLN` comparison not yet refreshed against the latest stabilized / non-stabilized SSL lines
+10. second dataset (XJTU-SY) not yet started
+11. no matched-protocol ablation yet isolating **union SSL vs no union SSL** on multiple tasks
 
 ## 6. Next priority
 
 Current recommended priority order:
 
-1. **validate union SSL + no-spec on FD003→FD001** and at least one more transfer pair
-2. **5-seed expansion** on FD001→FD003 with the new best SSL line
-3. **ablation study** under matched protocol: no-spec baseline vs union SSL + no-spec
-4. **run the new best line on 15-shot** for a refreshed comparison against FOMLN
-5. after SSL multi-task validation, decide whether FD003→FD001 still needs task-specific LR / architecture diagnosis
-6. only after SSL multi-task validation, revisit whether stronger SPD disentanglement is still worth pursuing
+1. **close the supervised source-backbone gap**, because the target-oracle controls show there is still major headroom before adaptation even becomes the whole story
+2. **diagnose where the remaining few-shot-to-oracle gap is being lost**, now that matched decompositions show source initialization helps only partially
+3. **diagnose task-conditional adaptation dynamics**, especially why the current unlabeled/domain-adaptation objective helps `FD001→FD003` but slightly hurts `FD001→FD004`, why the same seed ordering survives almost every `FD004` loss-component variant, and why the same freeze policy helps `FD001→FD003` but hurts `FD003→FD001`
+4. **matched multi-task ablation**: plain no-spec vs original union SSL vs selective-freeze SSL, with the hard-task negative result treated as part of the benchmark
+5. **refresh the 15-shot comparison against FOMLN** using whichever non-SSL / SSL branch is still evidence-supported after the ablation
+6. only after the above, revisit whether stronger SPD disentanglement is still worth pursuing
 7. second dataset (XJTU-SY)
 
 ## 7. Important files

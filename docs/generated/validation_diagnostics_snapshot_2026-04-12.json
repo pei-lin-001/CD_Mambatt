@@ -1,0 +1,336 @@
+{
+  "date": "2026-04-12",
+  "purpose": "validate source-quality hypothesis and recurrence-depth/drift hypothesis before changing architecture or piling on more losses",
+  "hypothesis_1_source_quality": {
+    "statement": "if source model quality is the main cross-domain bottleneck, better source RMSE should reliably imply better adapted target RMSE",
+    "canonical_fd001_to_fd003_matched_protocol": {
+      "date": "2026-04-09",
+      "experiment": "cross_domain_ssl_union_on_nospec_frontend",
+      "task": "FD001_TO_FD003",
+      "protocol": {
+        "shots": 5,
+        "val_units": 10,
+        "source_split_seed": 42,
+        "few_shot_seeds": [
+          42,
+          43,
+          44
+        ],
+        "ssl_preset": "paper_full",
+        "ssl_data": "source_train_union_target_train",
+        "notes": [
+          "seed42 uses earlier ssl run directory but split files and effective config match the no-spec baseline exactly",
+          "all SSL runs use target_lr=0.0015, cosine scheduler, domain_feature_tap=frontend_mean, lambda_spec_domain=0.0"
+        ]
+      },
+      "baseline_nospec_run_root": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_20260409/FD001_TO_FD003",
+      "ssl_run_roots": [
+        "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_seed42_20260409/FD001_TO_FD003",
+        "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_nospec_recheck_20260409/FD001_TO_FD003"
+      ],
+      "per_seed": {
+        "42": {
+          "baseline": {
+            "source_rmse": 15.1866061710897,
+            "direct_target_rmse": 42.655347406288,
+            "adapted_rmse": 22.275245204264813,
+            "best_epoch": 2,
+            "gate_mean": 0.17000507700070722
+          },
+          "ssl": {
+            "source_rmse": 16.115393994641238,
+            "direct_target_rmse": 36.80868632654371,
+            "adapted_rmse": 21.373475582911258,
+            "source_best_epoch": 10,
+            "ssl_best_epoch": 19,
+            "ssl_best_loss": 0.010273140132415922,
+            "gate_mean": 0.06356042423858876
+          },
+          "delta_ssl_minus_baseline": {
+            "source_rmse": 0.9287878235515379,
+            "direct_target_rmse": -5.846661079744294,
+            "adapted_rmse": -0.9017696213535551
+          }
+        },
+        "43": {
+          "baseline": {
+            "source_rmse": 16.617362382783366,
+            "direct_target_rmse": 51.04017155815821,
+            "adapted_rmse": 19.640773821103934,
+            "best_epoch": 1,
+            "gate_mean": 0.1267608110140473
+          },
+          "ssl": {
+            "source_rmse": 16.509732094368427,
+            "direct_target_rmse": 25.25302996261714,
+            "adapted_rmse": 18.61098106351017,
+            "source_best_epoch": 8,
+            "ssl_best_epoch": 20,
+            "ssl_best_loss": 0.010932272599074526,
+            "gate_mean": 0.06460148027111998
+          },
+          "delta_ssl_minus_baseline": {
+            "source_rmse": -0.10763028841493849,
+            "direct_target_rmse": -25.787141595541065,
+            "adapted_rmse": -1.0297927575937642
+          }
+        },
+        "44": {
+          "baseline": {
+            "source_rmse": 15.70630664147525,
+            "direct_target_rmse": 35.86383444237196,
+            "adapted_rmse": 19.950032661897403,
+            "best_epoch": 8,
+            "gate_mean": 0.11463543461585515
+          },
+          "ssl": {
+            "source_rmse": 17.32781137356614,
+            "direct_target_rmse": 46.30180360413536,
+            "adapted_rmse": 19.560427393539427,
+            "source_best_epoch": 5,
+            "ssl_best_epoch": 20,
+            "ssl_best_loss": 0.01084026769789017,
+            "gate_mean": 0.013771933456944324
+          },
+          "delta_ssl_minus_baseline": {
+            "source_rmse": 1.621504732090889,
+            "direct_target_rmse": 10.437969161763398,
+            "adapted_rmse": -0.3896052683579754
+          }
+        }
+      },
+      "aggregate": {
+        "baseline_nospec": {
+          "mean_source_rmse": 15.836758398449438,
+          "std_source_rmse": 0.5913425854208044,
+          "mean_direct_target_rmse": 43.186451135606056,
+          "std_direct_target_rmse": 6.207084954118665,
+          "mean_adapted_rmse": 20.622017229088716,
+          "std_adapted_rmse": 1.1758067616409513,
+          "best_adapted_rmse": 19.640773821103934
+        },
+        "ssl_union_nospec": {
+          "mean_source_rmse": 16.650979154191933,
+          "std_source_rmse": 0.5049435771195105,
+          "mean_direct_target_rmse": 36.1211732977654,
+          "std_direct_target_rmse": 8.606866389750413,
+          "mean_adapted_rmse": 19.848294679986953,
+          "std_adapted_rmse": 1.1460060131852878,
+          "best_adapted_rmse": 18.61098106351017
+        },
+        "improvement_ssl_minus_baseline": {
+          "mean_source_rmse": 0.814220755742495,
+          "mean_direct_target_rmse": -7.065277837840654,
+          "mean_adapted_rmse": -0.7737225491017625
+        },
+        "comparison_to_previous_best_spec_domain_0p1": {
+          "previous_best_mean_adapted_rmse": 20.015135891890584,
+          "ssl_union_nospec_mean_adapted_rmse": 19.848294679986953,
+          "delta_vs_previous_best": -0.16684121190363044
+        }
+      }
+    },
+    "takeaway": {
+      "mean_source_rmse_delta_ssl_minus_baseline": 0.814220755742495,
+      "mean_adapted_rmse_delta_ssl_minus_baseline": -0.7737225491017625,
+      "interpretation": "In the current best verified canonical comparison, SSL worsens mean source RMSE but still improves mean adapted target RMSE; this falsifies the strong form of the source-quality-is-destiny hypothesis."
+    }
+  },
+  "hypothesis_2_drift_as_primary_causal_limit": {
+    "statement": "if recurrence-depth-driven drift is the main limiter, methods/runs with better target RMSE should consistently show smaller state-drift amplification, especially on the hard task FD003->FD001",
+    "hard_task_baseline_summary": {
+      "task": "FD003_TO_FD001",
+      "source_subset": "FD003",
+      "target_subset": "FD001",
+      "seeds": [
+        43,
+        44
+      ],
+      "num_runs": 2,
+      "target_shots": 5,
+      "target_val_units": 10,
+      "lambda_mmd": 0.1,
+      "lambda_source_stage": 1.0,
+      "lambda_pseudo": 0.5,
+      "lambda_contrastive": 0.0,
+      "lambda_monotonic": 0.05,
+      "lambda_domain_adv": 0.1,
+      "lambda_inv_mmd": 0.1,
+      "lambda_spec_domain": 0.0,
+      "lambda_conditional_inv_mmd": 0.0,
+      "lambda_inv_spec_orth": 0.0,
+      "lambda_inv_spec_xcorr": 0.0,
+      "lambda_spec_residual": 0.0,
+      "lambda_inv_aux": 0.0,
+      "lambda_spec_reconstruction": 0.0,
+      "lambda_transformer_domain_adapter_l2": 0.0,
+      "inv_alignment_mode": "mmd",
+      "semantic_warmup_epochs": 0,
+      "semantic_warmup_lr": 0.0005,
+      "adaptation_freeze_mode": "none",
+      "adaptation_freeze_epochs": 0,
+      "reuse_source_model_for_adaptation": false,
+      "target_lr": 0.0015,
+      "target_lr_scheduler": "cosine",
+      "target_lr_min": 1e-05,
+      "stage_feature_mode": "combined",
+      "spd_predictor_mode": "shared_head",
+      "domain_conditioned_gate": false,
+      "frontend_adapter_mode": "none",
+      "transformer_domain_adapter_mode": "none",
+      "domain_feature_tap": "frontend_mean",
+      "grl_lambda": 1.0,
+      "grl_warmup_epochs": 5,
+      "domain_adv_hidden_dim": 16,
+      "pseudo_num_stages": 3,
+      "pseudo_start_quantile": 0.5,
+      "pseudo_end_quantile": 0.9,
+      "best_direct_seed": 44,
+      "best_direct_target_rmse": 23.251627503143375,
+      "mean_direct_target_rmse": 23.940242931307615,
+      "std_direct_target_rmse": 0.6886154281642387,
+      "best_cd_seed": 43,
+      "best_cd_val_rmse": 20.426655705747297,
+      "best_cd_test_rmse": 19.563954424734373,
+      "mean_cd_test_rmse": 20.21260324713056,
+      "std_cd_test_rmse": 0.6486488223961846,
+      "mean_cd_test_score": 1662.7780230701449,
+      "mean_best_epoch_pseudo_acceptance_ratio": 0.021083870753519175,
+      "mean_best_epoch_contrastive_valid_anchor_ratio": 1.0,
+      "mean_best_epoch_domain_accuracy": 0.0,
+      "elapsed_seconds": 1086.32
+    },
+    "hard_task_ssl_runs": [
+      {
+        "seed": 42,
+        "source_rmse": 15.70443898488567,
+        "direct_rmse": 24.070616772920364,
+        "adapted_rmse": 19.972752178430184,
+        "best_epoch": 8
+      },
+      {
+        "seed": 43,
+        "source_rmse": 16.082488125144415,
+        "direct_rmse": 20.138706557727957,
+        "adapted_rmse": 19.465546926254,
+        "best_epoch": 10
+      },
+      {
+        "seed": 44,
+        "source_rmse": 17.114702827864736,
+        "direct_rmse": 24.152095513392464,
+        "adapted_rmse": 22.448668244346948,
+        "best_epoch": 2
+      }
+    ],
+    "hard_task_paired_drift_curves": [
+      {
+        "seed": 42,
+        "drift": {
+          "x_conv": {
+            "baseline_step1": 0.2156810760498047,
+            "baseline_step5": 0.22500205039978027,
+            "baseline_step10": 0.2239067554473877,
+            "baseline_step12": 0.21473932266235352,
+            "baseline_step20": 0.19480061531066895,
+            "baseline_ratio_12_over_1": 0.9956335836008454,
+            "baseline_ratio_20_over_1": 0.9031882577666941,
+            "ssl_step1": 0.1993727684020996,
+            "ssl_step5": 0.28032898902893066,
+            "ssl_step10": 0.36211371421813965,
+            "ssl_step12": 0.37415361404418945,
+            "ssl_step20": 0.32047462463378906,
+            "ssl_ratio_12_over_1": 1.8766535522523708,
+            "ssl_ratio_20_over_1": 1.607414228142975
+          },
+          "inv_state": {
+            "baseline_step1": 0.029140472412109375,
+            "baseline_step5": 0.10004568099975586,
+            "baseline_step10": 0.15364313125610352,
+            "baseline_step12": 0.16772174835205078,
+            "baseline_step20": 0.17516136169433594,
+            "baseline_ratio_12_over_1": 5.755629009032596,
+            "baseline_ratio_20_over_1": 6.01093075009818,
+            "ssl_step1": 0.05417823791503906,
+            "ssl_step5": 0.1693272590637207,
+            "ssl_step10": 0.5196452140808105,
+            "ssl_step12": 0.5555939674377441,
+            "ssl_step20": 0.5123662948608398,
+            "ssl_ratio_12_over_1": 10.254928709734202,
+            "ssl_ratio_20_over_1": 9.457049815173384
+          },
+          "mixed_state": {
+            "baseline_step1": 0.03307342529296875,
+            "baseline_step5": 0.10430765151977539,
+            "baseline_step10": 0.15488004684448242,
+            "baseline_step12": 0.16680431365966797,
+            "baseline_step20": 0.17242145538330078,
+            "baseline_ratio_12_over_1": 5.04345444059977,
+            "baseline_ratio_20_over_1": 5.213292964244522,
+            "ssl_step1": 0.0578155517578125,
+            "ssl_step5": 0.16549253463745117,
+            "ssl_step10": 0.5108652114868164,
+            "ssl_step12": 0.5430808067321777,
+            "ssl_step20": 0.49782323837280273,
+            "ssl_ratio_12_over_1": 9.39333432304038,
+            "ssl_ratio_20_over_1": 8.61054202955925
+          }
+        }
+      },
+      {
+        "seed": 44,
+        "drift": {
+          "x_conv": {
+            "baseline_step1": 0.22259092330932617,
+            "baseline_step5": 0.37705492973327637,
+            "baseline_step10": 0.39508771896362305,
+            "baseline_step12": 0.39324307441711426,
+            "baseline_step20": 0.36893630027770996,
+            "baseline_ratio_12_over_1": 1.7666626678691622,
+            "baseline_ratio_20_over_1": 1.6574633628030429,
+            "ssl_step1": 0.27468061447143555,
+            "ssl_step5": 0.3690056800842285,
+            "ssl_step10": 0.34162330627441406,
+            "ssl_step12": 0.3528764247894287,
+            "ssl_step20": 0.2919619083404541,
+            "ssl_ratio_12_over_1": 1.2846790279265408,
+            "ssl_ratio_20_over_1": 1.0629141372144981
+          },
+          "inv_state": {
+            "baseline_step1": 0.0057430267333984375,
+            "baseline_step5": 0.17655611038208008,
+            "baseline_step10": 0.22950458526611328,
+            "baseline_step12": 0.22731924057006836,
+            "baseline_step20": 0.23852300643920898,
+            "baseline_ratio_12_over_1": 39.5817834606443,
+            "baseline_ratio_20_over_1": 41.532630355363665,
+            "ssl_step1": 0.08324337005615234,
+            "ssl_step5": 0.19308185577392578,
+            "ssl_step10": 0.23117494583129883,
+            "ssl_step12": 0.24793338775634766,
+            "ssl_step20": 0.30115795135498047,
+            "ssl_ratio_12_over_1": 2.978416029878447,
+            "ssl_ratio_20_over_1": 3.6178010471204187
+          },
+          "mixed_state": {
+            "baseline_step1": 0.006669044494628906,
+            "baseline_step5": 0.18378639221191406,
+            "baseline_step10": 0.22915124893188477,
+            "baseline_step12": 0.2261953353881836,
+            "baseline_step20": 0.236114501953125,
+            "baseline_ratio_12_over_1": 33.917202917202914,
+            "baseline_ratio_20_over_1": 35.40454740454741,
+            "ssl_step1": 0.15451335906982422,
+            "ssl_step5": 0.2006373405456543,
+            "ssl_step10": 0.31451892852783203,
+            "ssl_step12": 0.31116509437561035,
+            "ssl_step20": 0.2854747772216797,
+            "ssl_ratio_12_over_1": 2.0138394262401325,
+            "ssl_ratio_20_over_1": 1.8475734327455422
+          }
+        }
+      }
+    ],
+    "interpretation": "On FD003->FD001, existing paired diagnostics already show that SSL is not guaranteed to reduce inv/mixed-state drift; therefore drift reduction is a strong candidate mechanism on the canonical task, but not yet a universal explanation across tasks."
+  }
+}

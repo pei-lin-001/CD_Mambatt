@@ -1,0 +1,74 @@
+{
+  "date": "2026-04-12",
+  "task": "FD001_TO_FD003",
+  "seed": 46,
+  "question": "does seed46 SSL already have worse few-shot target fit at adaptation start?",
+  "target_partition_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/splits/target_few_shot_seed46.json",
+  "labeled_windows_shape": [
+    1148,
+    20,
+    21
+  ],
+  "val_windows_shape": [
+    2168,
+    20,
+    21
+  ],
+  "test_windows_shape": [
+    100,
+    20,
+    21
+  ],
+  "metrics": {
+    "baseline_source": {
+      "checkpoint": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/seed_46/source/best.pt",
+      "fewshot_labeled_rmse": 39.02650553184911,
+      "fewshot_labeled_mae": 29.141825194142836,
+      "target_val_rmse": 43.22559459457394,
+      "target_test_rmse": 46.42069876405473
+    },
+    "baseline_cd_epoch1": {
+      "checkpoint": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/seed_46/cd_stage/best.pt",
+      "fewshot_labeled_rmse": 9.026376139716676,
+      "fewshot_labeled_mae": 7.0969133553604635,
+      "target_val_rmse": 22.246393197594447,
+      "target_test_rmse": 18.45576385138894
+    },
+    "ssl_source": {
+      "checkpoint": "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/seed_46/source/best.pt",
+      "fewshot_labeled_rmse": 34.037863844964114,
+      "fewshot_labeled_mae": 26.96710169793006,
+      "target_val_rmse": 35.464793636558355,
+      "target_test_rmse": 41.814614282081
+    },
+    "ssl_cd_epoch1": {
+      "checkpoint": "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/seed_46/cd_stage/best.pt",
+      "fewshot_labeled_rmse": 8.749865665644945,
+      "fewshot_labeled_mae": 6.599198438149296,
+      "target_val_rmse": 28.06834150041265,
+      "target_test_rmse": 26.425029659253177
+    }
+  },
+  "comparisons": {
+    "source_init_ssl_minus_baseline": {
+      "fewshot_labeled_rmse": -4.988641686884996,
+      "target_val_rmse": -7.760800958015587,
+      "target_test_rmse": -4.606084481973724
+    },
+    "epoch1_cd_ssl_minus_baseline": {
+      "fewshot_labeled_rmse": -0.27651047407173124,
+      "target_val_rmse": 5.821948302818203,
+      "target_test_rmse": 7.969265807864236
+    },
+    "baseline_adaptation_gain_from_source_to_epoch1": {
+      "fewshot_labeled_rmse": -30.000129392132436,
+      "target_val_rmse": -20.979201396979494,
+      "target_test_rmse": -27.964934912665786
+    },
+    "ssl_adaptation_gain_from_source_to_epoch1": {
+      "fewshot_labeled_rmse": -25.287998179319167,
+      "target_val_rmse": -7.3964521361457045,
+      "target_test_rmse": -15.389584622827826
+    }
+  }
+}

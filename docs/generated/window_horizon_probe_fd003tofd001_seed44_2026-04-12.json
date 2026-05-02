@@ -1,0 +1,41 @@
+{
+  "date": "2026-04-12",
+  "task": "FD003_TO_FD001",
+  "seed": 44,
+  "protocol": "low-cost fixed-split/fixed-partition probe using current no-spec frontend_mean+mmd recipe; source_epochs=20, target_epochs=10",
+  "results": {
+    "w20": {
+      "window_size": 20,
+      "source_best_val_rmse": 15.306617026795703,
+      "source_test_rmse": 15.958778430677016,
+      "direct_target_rmse": 23.2473181580451,
+      "adapted_best_val_rmse": 22.396125491008775,
+      "adapted_test_rmse": 21.143245664644713,
+      "best_epoch": 1,
+      "pseudo_acceptance": 0.003979285908967021,
+      "gate_mean": 0.12132430772290273,
+      "summary_path": "/home/shelterpl/cd_mambatt/runs/window_horizon_probe_fd003tofd001_w20_seed44/FD003_TO_FD001/summary.json"
+    },
+    "w12": {
+      "window_size": 12,
+      "source_best_val_rmse": 18.90913727865707,
+      "source_test_rmse": 18.03687741133873,
+      "direct_target_rmse": 31.558129522171377,
+      "adapted_best_val_rmse": 22.637655206361373,
+      "adapted_test_rmse": 24.2539501198295,
+      "best_epoch": 6,
+      "pseudo_acceptance": 0.041822688676757556,
+      "gate_mean": 0.15755814061318504,
+      "summary_path": "/home/shelterpl/cd_mambatt/runs/window_horizon_probe_fd003tofd001_w12_seed44/FD003_TO_FD001/summary.json"
+    }
+  },
+  "delta_w12_minus_w20": {
+    "source_test_rmse": 2.0780989806617125,
+    "direct_target_rmse": 8.310811364126277,
+    "adapted_test_rmse": 3.1107044551847878,
+    "adapted_best_val_rmse": 0.24152971535259837,
+    "pseudo_acceptance": 0.03784340276779054,
+    "gate_mean": 0.036233832890282314
+  },
+  "interpretation": "Under a controlled low-cost probe on the hard task FD003->FD001, shortening the window from 20 to 12 makes both source fitting and target transfer substantially worse. This argues against treating shorter recurrence depth as an obviously promising default fix."
+}

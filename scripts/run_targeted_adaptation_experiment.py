@@ -15,7 +15,7 @@ if str(REPO_ROOT) not in sys.path:
 from cd_mambatt.cross_domain import resolve_cross_domain_task
 from cd_mambatt.data import load_cmapss_split
 from train_cd_mambatt_v1 import build_target_cd_data
-from train_cd_mambatt_v3 import build_target_monotonic_loader, fit_cd_pseudo_stage
+from train_cd_mambatt_v3 import build_target_monotonic_loader, fit_cd_pseudo_stage, uses_domain_conditioning
 from train_cross_domain_baseline import build_source_stage_data
 from train_supervised import build_model, evaluate, infer_device, set_seed
 
@@ -61,6 +61,16 @@ def build_manual_record(args_cli: argparse.Namespace) -> dict[str, object]:
 
 def args_from_record(record: dict[str, object]) -> Namespace:
     cd_stage = record["cd_stage"]
+    inv_alignment_mode = str(cd_stage.get("inv_alignment_mode", "mmd") or "mmd")
+    lambda_inv_mmd = float(
+        cd_stage.get(
+            "lambda_inv_mmd",
+            cd_stage.get("lambda_domain_adv", 0.1 if inv_alignment_mode == "mmd" else 0.0),
+        )
+    )
+    # Older targeted/SSL result records did not persist split seeds explicitly.
+    source_split_seed = int(record.get("source_split_seed", 42))
+    few_shot_seed = int(record.get("few_shot_seed", record["seed"]))
     return Namespace(
         root="/home/shelterpl/data/CMAPSS",
         task=str(record["task"]),
@@ -72,13 +82,13 @@ def args_from_record(record: dict[str, object]) -> Namespace:
         target_scale=1.0,
         grad_clip_norm=0.0,
         source_train_ratio=0.8,
-        source_split_seed=int(record["source_split_seed"]),
+        source_split_seed=source_split_seed,
         source_split_path=str(record["source_split_path"]),
         resample_source_split_per_seed=False,
         source_normalizer_fit_scope="train_only",
         target_shots=5,
         target_val_units=10,
-        few_shot_seed=int(record["few_shot_seed"]),
+        few_shot_seed=few_shot_seed,
         target_partition_path=str(record["target_partition_path"]),
         resample_few_shot_per_seed=False,
         seeds=str(record["seed"]),
@@ -99,32 +109,15 @@ def args_from_record(record: dict[str, object]) -> Namespace:
         mmd_sigmas="1,2,4,8,16",
         lambda_source_stage=float(cd_stage.get("lambda_source_stage", 1.0)),
         lambda_pseudo=float(cd_stage.get("lambda_pseudo", 0.5)),
-        lambda_contrastive=float(cd_stage.get("lambda_contrastive", 0.0)),
         lambda_monotonic=float(cd_stage.get("lambda_monotonic", 0.05)),
-        inv_alignment_mode=str(cd_stage.get("inv_alignment_mode", "mmd")),
-        lambda_domain_adv=float(cd_stage.get("lambda_domain_adv", 0.0)),
-        lambda_inv_mmd=float(cd_stage.get("lambda_inv_mmd", 0.1)),
+        inv_alignment_mode=inv_alignment_mode,
+        lambda_inv_mmd=lambda_inv_mmd,
         lambda_spec_domain=float(cd_stage.get("lambda_spec_domain", 0.0)),
-        lambda_conditional_inv_mmd=float(cd_stage.get("lambda_conditional_inv_mmd", 0.0)),
-        lambda_conditional_proto=float(cd_stage.get("lambda_conditional_proto", 0.0)),
-        lambda_conditional_proto_ce=float(cd_stage.get("lambda_conditional_proto_ce", 0.0)),
-        conditional_target_scope=str(cd_stage.get("conditional_target_scope", "labeled_accepted")),
-        lambda_inv_spec_orth=float(cd_stage.get("lambda_inv_spec_orth", 0.0)),
-        lambda_spec_residual=float(cd_stage.get("lambda_spec_residual", 0.0)),
-        lambda_inv_aux=float(cd_stage.get("lambda_inv_aux", 0.0)),
-        lambda_spec_reconstruction=float(cd_stage.get("lambda_spec_reconstruction", 0.0)),
-        semantic_warmup_epochs=int(cd_stage.get("semantic_warmup_epochs", 0)),
-        semantic_warmup_lr=float(cd_stage.get("semantic_warmup_lr", 5e-4)),
+        lambda_transformer_domain_adapter_l2=float(cd_stage.get("lambda_transformer_domain_adapter_l2", 0.0)),
         adaptation_freeze_mode=str(cd_stage.get("adaptation_freeze_mode", "none") or "none"),
         adaptation_freeze_epochs=int(cd_stage.get("adaptation_freeze_epochs", 0) or 0),
-        grl_lambda=float(cd_stage.get("grl_lambda", 1.0)),
-        grl_warmup_epochs=int(cd_stage.get("grl_warmup_epochs", 5)),
         domain_feature_tap=str(cd_stage.get("domain_feature_tap", "inv_mean")),
-        domain_adv_hidden_dim=int(cd_stage.get("domain_adv_hidden_dim", 16)),
-        domain_adv_dropout=0.0,
         stage_feature_mode=str(cd_stage.get("stage_feature_mode", "combined")),
-        contrastive_temperature=0.1,
-        disable_contrastive_feature_normalization=False,
         monotonic_margin=0.0,
         monotonic_pair_gap=1,
         monotonic_pair_stride=1,
@@ -197,15 +190,13 @@ def main() -> None:
     parser.add_argument("--adaptation-freeze-mode", default=None)
     parser.add_argument("--adaptation-freeze-epochs", type=int, default=None)
     parser.add_argument("--inv-alignment-mode", default=None)
+    parser.add_argument("--lambda-mmd", type=float, default=None)
+    parser.add_argument("--lambda-source-stage", type=float, default=None)
     parser.add_argument("--lambda-inv-mmd", type=float, default=None)
     parser.add_argument("--lambda-spec-domain", type=float, default=None)
-    parser.add_argument("--lambda-conditional-inv-mmd", type=float, default=None)
-    parser.add_argument("--lambda-conditional-proto", type=float, default=None)
-    parser.add_argument("--lambda-conditional-proto-ce", type=float, default=None)
-    parser.add_argument("--lambda-contrastive", type=float, default=None)
+    parser.add_argument("--lambda-transformer-domain-adapter-l2", type=float, default=None)
     parser.add_argument("--lambda-pseudo", type=float, default=None)
     parser.add_argument("--lambda-monotonic", type=float, default=None)
-    parser.add_argument("--conditional-target-scope", default=None)
     parser.add_argument("--stage-feature-mode", default=None)
     parser.add_argument("--domain-feature-tap", default=None)
     parser.add_argument("--pseudo-start-quantile", type=float, default=None)
@@ -214,6 +205,8 @@ def main() -> None:
     parser.add_argument("--target-lr", type=float, default=None)
     parser.add_argument("--target-lr-scheduler", choices=("none", "cosine"), default=None)
     parser.add_argument("--target-lr-min", type=float, default=None)
+    parser.add_argument("--transformer-norm-mode", choices=("pre", "post"), default=None)
+    parser.add_argument("--mamba-block-mode", choices=("bare", "prenorm_residual", "dd_spd"), default=None)
     parser.add_argument("--adaptation-seed", type=int, default=None)
     parser.add_argument("--max-target-train-batches", type=int, default=None)
     parser.add_argument("--device", default="auto")
@@ -237,24 +230,20 @@ def main() -> None:
         args.adaptation_freeze_epochs = int(args_cli.adaptation_freeze_epochs)
     if args_cli.inv_alignment_mode is not None:
         args.inv_alignment_mode = str(args_cli.inv_alignment_mode)
+    if args_cli.lambda_mmd is not None:
+        args.lambda_mmd = float(args_cli.lambda_mmd)
+    if args_cli.lambda_source_stage is not None:
+        args.lambda_source_stage = float(args_cli.lambda_source_stage)
     if args_cli.lambda_inv_mmd is not None:
         args.lambda_inv_mmd = float(args_cli.lambda_inv_mmd)
     if args_cli.lambda_spec_domain is not None:
         args.lambda_spec_domain = float(args_cli.lambda_spec_domain)
-    if args_cli.lambda_conditional_inv_mmd is not None:
-        args.lambda_conditional_inv_mmd = float(args_cli.lambda_conditional_inv_mmd)
-    if args_cli.lambda_conditional_proto is not None:
-        args.lambda_conditional_proto = float(args_cli.lambda_conditional_proto)
-    if args_cli.lambda_conditional_proto_ce is not None:
-        args.lambda_conditional_proto_ce = float(args_cli.lambda_conditional_proto_ce)
-    if args_cli.lambda_contrastive is not None:
-        args.lambda_contrastive = float(args_cli.lambda_contrastive)
+    if args_cli.lambda_transformer_domain_adapter_l2 is not None:
+        args.lambda_transformer_domain_adapter_l2 = float(args_cli.lambda_transformer_domain_adapter_l2)
     if args_cli.lambda_pseudo is not None:
         args.lambda_pseudo = float(args_cli.lambda_pseudo)
     if args_cli.lambda_monotonic is not None:
         args.lambda_monotonic = float(args_cli.lambda_monotonic)
-    if args_cli.conditional_target_scope is not None:
-        args.conditional_target_scope = str(args_cli.conditional_target_scope)
     if args_cli.stage_feature_mode is not None:
         args.stage_feature_mode = str(args_cli.stage_feature_mode)
     if args_cli.domain_feature_tap is not None:
@@ -271,6 +260,10 @@ def main() -> None:
         args.target_lr_scheduler = str(args_cli.target_lr_scheduler)
     if args_cli.target_lr_min is not None:
         args.target_lr_min = float(args_cli.target_lr_min)
+    if args_cli.transformer_norm_mode is not None:
+        args.transformer_norm_mode = str(args_cli.transformer_norm_mode)
+    if args_cli.mamba_block_mode is not None:
+        args.mamba_block_mode = str(args_cli.mamba_block_mode)
     if args_cli.max_target_train_batches is not None:
         args.max_target_train_batches = int(args_cli.max_target_train_batches)
 
@@ -296,7 +289,13 @@ def main() -> None:
         float(args.target_scale),
         None if float(args.grad_clip_norm) <= 0 else float(args.grad_clip_norm),
     )
-    test_metrics = evaluate(model, target_loaders["test"], device, float(args.target_scale))
+    test_metrics = evaluate(
+        model,
+        target_loaders["test"],
+        device,
+        float(args.target_scale),
+        domain_label_value=1 if uses_domain_conditioning(model) else None,
+    )
     result = {
         "experiment_name": args_cli.experiment_name,
         "baseline_run_root": str(baseline_run_root) if baseline_run_root is not None else None,
@@ -305,15 +304,13 @@ def main() -> None:
         "adaptation_freeze_mode": str(args.adaptation_freeze_mode),
         "adaptation_freeze_epochs": int(args.adaptation_freeze_epochs),
         "inv_alignment_mode": str(args.inv_alignment_mode),
+        "lambda_mmd": float(args.lambda_mmd),
+        "lambda_source_stage": float(args.lambda_source_stage),
         "lambda_inv_mmd": float(args.lambda_inv_mmd),
         "lambda_spec_domain": float(args.lambda_spec_domain),
-            "lambda_conditional_inv_mmd": float(args.lambda_conditional_inv_mmd),
-            "lambda_conditional_proto": float(args.lambda_conditional_proto),
-            "lambda_conditional_proto_ce": float(args.lambda_conditional_proto_ce),
-            "lambda_contrastive": float(args.lambda_contrastive),
-            "lambda_pseudo": float(args.lambda_pseudo),
-            "lambda_monotonic": float(args.lambda_monotonic),
-            "conditional_target_scope": str(args.conditional_target_scope),
+        "lambda_transformer_domain_adapter_l2": float(args.lambda_transformer_domain_adapter_l2),
+        "lambda_pseudo": float(args.lambda_pseudo),
+        "lambda_monotonic": float(args.lambda_monotonic),
         "stage_feature_mode": str(args.stage_feature_mode),
         "domain_feature_tap": str(args.domain_feature_tap),
         "pseudo_start_quantile": float(args.pseudo_start_quantile),
@@ -322,6 +319,8 @@ def main() -> None:
         "target_lr": float(args.target_lr),
         "target_lr_scheduler": str(args.target_lr_scheduler),
         "target_lr_min": float(args.target_lr_min),
+        "transformer_norm_mode": str(args.transformer_norm_mode),
+        "mamba_block_mode": str(args.mamba_block_mode),
         "adaptation_seed": adaptation_seed,
         "max_target_train_batches": args.max_target_train_batches,
         "source_meta": source_meta,

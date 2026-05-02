@@ -1,0 +1,104 @@
+{
+  "date": "2026-04-13",
+  "purpose": "separate target-label scarcity from source-initialization benefit by adding matched target-only few-shot-from-scratch controls on the exact target partitions used by existing cross-domain runs",
+  "fd001_to_fd003": {
+    "matched_cross_domain_run_root": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_20260409/FD001_TO_FD003",
+    "matched_source_initialized_run_root": "/home/shelterpl/cd_mambatt/runs/target_only_fewshot_controls/fd001tofd003_sourceinit5shot_matchv3_20260413/FD001_TO_FD003",
+    "target_only_run_root": "/home/shelterpl/cd_mambatt/runs/target_only_fewshot_controls/fd001tofd003_targetonly5shot_matchv3_20260413/FD001_TO_FD003",
+    "protocol": {
+      "shots": 5,
+      "target_partition_seeds": [
+        42,
+        43,
+        44
+      ],
+      "reuse_target_partitions": true,
+      "train_from_scratch": true,
+      "target_only_uses_unlabeled_target_windows": false,
+      "target_epochs": 20,
+      "target_lr": 0.0015,
+      "target_lr_scheduler": "cosine",
+      "target_lr_min": 1e-05
+    },
+    "reference_numbers": {
+      "target_oracle_rmse": 14.112766210658243,
+      "matched_target_only_5shot_rmse": 22.465003933577147,
+      "matched_source_initialized_5shot_rmse": 21.935377075784732,
+      "matched_cross_domain_5shot_rmse": 20.622017229088716,
+      "matched_direct_transfer_rmse": 43.186451135606056
+    },
+    "derived_gaps": {
+      "target_only_minus_target_oracle": 8.352237722918904,
+      "source_initialized_minus_target_oracle": 7.822610865126489,
+      "cross_domain_minus_target_oracle": 6.509251018430473,
+      "target_only_minus_source_initialized": 0.5296268577924149,
+      "source_initialized_minus_cross_domain": 1.3133598466960166,
+      "target_only_minus_cross_domain": 1.8429867044884318,
+      "direct_minus_target_only": 20.72144720202891,
+      "direct_minus_cross_domain": 22.56443390651734
+    },
+    "evidence_supported_conclusions": [
+      "Target-only 5-shot training from scratch already recovers a large amount of the direct-transfer gap on FD001_TO_FD003.",
+      "Within the current v3 no-spec mainline, source initialization alone provides a modest gain of about 0.53 RMSE over target-only scratch on this canonical task.",
+      "The full cross-domain pipeline then adds a further gain of about 1.31 RMSE beyond source-initialized supervised finetuning, so most of the mainline advantage over scratch is not explained by source initialization alone.",
+      "Even after that gain, the remaining gap to the FD003 target oracle is still large at about 6.51 RMSE."
+    ]
+  },
+  "fd001_to_fd004": {
+    "matched_cross_domain_run_root": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_bestcfg_fd001_to_fd004_5seeds_fixcond/FD001_TO_FD004",
+    "matched_source_initialized_run_root": "/home/shelterpl/cd_mambatt/runs/target_only_fewshot_controls/fd001tofd004_sourceinit5shot_matchv2_20260413/FD001_TO_FD004",
+    "target_only_run_root": "/home/shelterpl/cd_mambatt/runs/target_only_fewshot_controls/fd001tofd004_targetonly5shot_matchv2_20260413/FD001_TO_FD004",
+    "protocol": {
+      "shots": 5,
+      "target_partition_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+      ],
+      "reuse_target_partitions": true,
+      "train_from_scratch": true,
+      "target_only_uses_unlabeled_target_windows": false,
+      "target_epochs": 20,
+      "target_lr": 0.0005,
+      "target_lr_scheduler": "none",
+      "target_lr_min": 1e-05,
+      "mamba_block_mode": "bare",
+      "transformer_norm_mode": "pre"
+    },
+    "reference_numbers": {
+      "target_oracle_rmse": 16.44951865328692,
+      "matched_target_only_5shot_rmse": 24.762306264572135,
+      "matched_source_initialized_5shot_rmse": 23.86262891677749,
+      "matched_cross_domain_5shot_rmse": 24.344873332179727,
+      "matched_direct_transfer_rmse": 32.382021790747885
+    },
+    "derived_gaps": {
+      "target_only_minus_target_oracle": 8.312787611285215,
+      "source_initialized_minus_target_oracle": 7.41311026349057,
+      "cross_domain_minus_target_oracle": 7.8953546788928075,
+      "target_only_minus_source_initialized": 0.8996773477946451,
+      "cross_domain_minus_source_initialized": 0.4822444154022385,
+      "target_only_minus_cross_domain": 0.4174329323924084,
+      "direct_minus_target_only": 7.619715526175749,
+      "direct_minus_cross_domain": 8.037148458568158
+    },
+    "evidence_supported_conclusions": [
+      "On FD001_TO_FD004, target-only 5-shot training from scratch already captures most of the gain over direct transfer.",
+      "On this harder task, source initialization alone provides a modest gain of about 0.90 RMSE over target-only scratch.",
+      "But the full current CD-MambAtt v2 pipeline is actually about 0.48 RMSE worse than simple source-initialized supervised finetuning, which implies the extra unlabeled/domain-adaptation machinery is slightly hurting in this matched comparison.",
+      "The remaining gap to the FD004 target oracle is still about 7.41 to 7.90 RMSE depending on whether those extra losses are used."
+    ]
+  },
+  "important_caveats": [
+    "The within-task comparisons are controlled and matched by target partition; the cross-domain and target-only numbers differ mainly by whether source initialization and unlabeled/domain-adaptation machinery are present.",
+    "The FD001_TO_FD003 and FD001_TO_FD004 matched baselines come from different maintained branches (v3 no-spec versus v2 stable), so cross-task differences in transfer-init gain should be treated as suggestive rather than perfectly architecture-controlled."
+  ],
+  "project_level_takeaway": [
+    "The new controls falsify the strongest version of the claim that post-MMD work was entirely useless, but they also sharpen where the value really is.",
+    "On the canonical FD001_TO_FD003 task, source initialization alone helps only modestly, while the larger extra gain comes from the full cross-domain training machinery.",
+    "On FD001_TO_FD004, source initialization still helps, but the extra unlabeled/domain-adaptation machinery is slightly harmful relative to simple source-initialized supervised finetuning.",
+    "So the correct narrower conclusion is not just that source initialization matters; it is that the value of the current cross-domain objective is task-dependent, and the remaining main ceiling is still the large gap to the target oracle."
+  ]
+}

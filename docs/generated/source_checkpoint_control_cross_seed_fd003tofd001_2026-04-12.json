@@ -1,0 +1,137 @@
+{
+  "task": "FD003_TO_FD001",
+  "date": "2026-04-12",
+  "seeds": {
+    "42": {
+      "fixed_eval_path": "/home/shelterpl/cd_mambatt/docs/generated/source_checkpoint_control_fixed_eval_fd003tofd001_seed42_2026-04-12.json",
+      "adaptation_summary_path": "/home/shelterpl/cd_mambatt/docs/generated/source_checkpoint_control_adaptation_fd003tofd001_seed42_2026-04-12.json",
+      "rows": [
+        {
+          "name": "baseline_frontendmean",
+          "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_baseline_frontendmean_seed42_20260412/FD003_TO_FD001/seed_42/result.json",
+          "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/seed_42/source/best.pt",
+          "source_test_rmse": 15.888668465474511,
+          "target_direct_rmse": 30.636264975967283,
+          "adapted_rmse": 20.455129404183854,
+          "adapted_gain_vs_direct": 10.181135571783429,
+          "best_val_rmse": 23.688045118653736,
+          "best_epoch": 5,
+          "best_gate_mean": 0.14572063639097996,
+          "best_pseudo_acceptance_ratio": 0.024131168972654972
+        },
+        {
+          "name": "ssl_union_frontendmean",
+          "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_ssl_union_frontendmean_seed42_20260412/FD003_TO_FD001/seed_42/result.json",
+          "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_nospec_fd003tofd001_20260409/FD003_TO_FD001/seed_42/source/best.pt",
+          "source_test_rmse": 15.704439068467918,
+          "target_direct_rmse": 24.07061671979232,
+          "adapted_rmse": 20.047250159116896,
+          "adapted_gain_vs_direct": 4.023366560675424,
+          "best_val_rmse": 22.729326036268727,
+          "best_epoch": 8,
+          "best_gate_mean": 0.025191496986309823,
+          "best_pseudo_acceptance_ratio": 0.16875476631441333
+        },
+        {
+          "name": "spd_best_frontendmean",
+          "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_spd_best_frontendmean_seed42_20260412/FD003_TO_FD001/seed_42/result.json",
+          "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/spd_best_fd003_to_fd001/FD003_TO_FD001/seed_42/source/best.pt",
+          "source_test_rmse": 15.958087057782308,
+          "target_direct_rmse": 30.481745270604343,
+          "adapted_rmse": 20.48210868844056,
+          "adapted_gain_vs_direct": 9.999636582163781,
+          "best_val_rmse": 23.765502165861204,
+          "best_epoch": 5,
+          "best_gate_mean": 0.14575104598407726,
+          "best_pseudo_acceptance_ratio": 0.03186621636343828
+        },
+        {
+          "name": "spd_highlr_frontendmean",
+          "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_spd_highlr_frontendmean_seed42_20260412/FD003_TO_FD001/seed_42/result.json",
+          "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/spd_highlr_frontend_multitask/FD003_TO_FD001/seed_42/source/best.pt",
+          "source_test_rmse": 15.85760889908607,
+          "target_direct_rmse": 30.623329758224457,
+          "adapted_rmse": 20.184360844397762,
+          "adapted_gain_vs_direct": 10.438968913826695,
+          "best_val_rmse": 23.827915238500818,
+          "best_epoch": 5,
+          "best_gate_mean": 0.1419877032331017,
+          "best_pseudo_acceptance_ratio": 0.03894759777753568
+        }
+      ]
+    },
+    "44": {
+      "fixed_eval_path": "/home/shelterpl/cd_mambatt/docs/generated/source_checkpoint_control_fixed_eval_fd003tofd001_seed44_2026-04-12.json",
+      "adaptation_summary_path": "/home/shelterpl/cd_mambatt/docs/generated/source_checkpoint_control_adaptation_fd003tofd001_seed44_2026-04-12.json",
+      "rows": [
+        {
+          "name": "baseline_frontendmean",
+          "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_baseline_frontendmean_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+          "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/seed_44/source/best.pt",
+          "source_test_rmse": 15.979897081277223,
+          "target_direct_rmse": 23.25162673148259,
+          "adapted_rmse": 21.798970907031556,
+          "adapted_gain_vs_direct": 1.4526558244510355,
+          "best_val_rmse": 22.839547395155073,
+          "best_epoch": 2,
+          "best_gate_mean": 0.12414363397806054,
+          "best_pseudo_acceptance_ratio": 0.014063777596075225
+        },
+        {
+          "name": "ssl_union_frontendmean",
+          "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_ssl_union_frontendmean_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+          "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_nospec_fd003tofd001_20260409/FD003_TO_FD001/seed_44/source/best.pt",
+          "source_test_rmse": 17.114704079506087,
+          "target_direct_rmse": 24.15209655054983,
+          "adapted_rmse": 22.905086096953507,
+          "adapted_gain_vs_direct": 1.2470104535963245,
+          "best_val_rmse": 22.326713001337637,
+          "best_epoch": 2,
+          "best_gate_mean": 0.06786745058525312,
+          "best_pseudo_acceptance_ratio": 0.01760697737803216
+        },
+        {
+          "name": "w12_frontendmean",
+          "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_w12_frontendmean_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+          "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/window_horizon_probe_fd003tofd001_w12_seed44/FD003_TO_FD001/seed_44/source/best.pt",
+          "source_test_rmse": 16.666327099623608,
+          "target_direct_rmse": 26.711130095908707,
+          "adapted_rmse": 24.17860324592953,
+          "adapted_gain_vs_direct": 2.5325268499791775,
+          "best_val_rmse": 23.022929984171327,
+          "best_epoch": 5,
+          "best_gate_mean": 0.14665723160753447,
+          "best_pseudo_acceptance_ratio": 0.010466067048242027
+        },
+        {
+          "name": "pretap_frontendmean",
+          "result_path": "/home/shelterpl/cd_mambatt/runs/source_checkpoint_control_experiments/source_ckpt_ctrl_pretap_frontendmean_seed44_20260412/FD003_TO_FD001/seed_44/result.json",
+          "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_nospec_pretap_fd003tofd001_seed44_20260409/FD003_TO_FD001/seed_44/source/best.pt",
+          "source_test_rmse": 16.065342000800776,
+          "target_direct_rmse": 23.202114697121544,
+          "adapted_rmse": 21.757714514329823,
+          "adapted_gain_vs_direct": 1.4444001827917212,
+          "best_val_rmse": 22.823929169253674,
+          "best_epoch": 2,
+          "best_gate_mean": 0.12411003913691751,
+          "best_pseudo_acceptance_ratio": 0.014499863723085309
+        }
+      ]
+    }
+  },
+  "cross_seed_observations": [
+    "The effect of swapping only the source checkpoint is real but seed-dependent.",
+    "Seed 44 rejects the strong source-quality hypothesis: pretap has slightly worse source RMSE than baseline but slightly better adapted RMSE.",
+    "Seed 42 shows the SSL source checkpoint can help under fixed control, but the adapted gain is much smaller than the direct-transfer gain.",
+    "Across both seeds, source checkpoint quality matters most in the clearly bad-source regime, but it is not a sufficient single-factor explanation of the hard-task ceiling."
+  ],
+  "evidence_supported_conclusions": [
+    "Source checkpoint swapping changes outputs materially under fixed target recipe, so the experiment is sensitive to source quality rather than being a no-op.",
+    "The strong claim that source supervised quality alone determines adapted quality is too coarse.",
+    "The claim that SSL works purely by providing a universally better source checkpoint is not supported; it helps on seed 42 but hurts on seed 44 under the same control setup."
+  ],
+  "open_interpretation": [
+    "The remaining bottleneck likely involves an interaction between source representation, target partition, and adaptation dynamics rather than a single scalar source RMSE.",
+    "A next useful diagnostic would be to compare early-epoch pseudo acceptance and alignment statistics for baseline vs SSL on seed 42 and 44 under the same control recipe."
+  ]
+}

@@ -1,6 +1,6 @@
 # Supervised Reproduction Status
 
-Last updated: `2026-04-05`
+Last updated: `2026-04-13`
 
 This file consolidates the old supervised-reproduction notes into one place.
 
@@ -110,6 +110,96 @@ Results:
 
 - fixed split mean test RMSE = **15.0937**
 - resampled-split mean test RMSE = **15.3024**
+
+### 5.4 Target-domain oracle control on `FD003`
+
+To avoid over-attributing the canonical `FD001→FD003` ceiling to source-side
+backbone weakness alone, we added a target-domain full-supervised control using
+the same current best local supervised recipe:
+
+- subset = `FD003`
+- `transformer_norm_mode = post`
+- `dim_feedforward = 84`
+- `val_all_windows = True`
+- `lr = 5e-4`
+- `weight_decay = 1e-4`
+- seeds `42,43,44`
+- output:
+  - `/home/shelterpl/cd_mambatt/runs/oracle_supervised_fd003_post_dff84_valall_lr5e4_wd1e4/FD003`
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/mambatt_target_oracle_fd003_decomposition_2026-04-13.json`
+
+Results:
+
+- fixed-split mean test RMSE = **14.1128**
+- fixed-split std test RMSE = **0.1932**
+
+Why this matters:
+
+- current local `FD001` supervised reproduction:
+  - fixed split = **15.0937**
+- current `FD001→FD003` cross-domain few-shot references:
+  - stable v2 `5`-seed mean = **21.9608**
+  - union-SSL `3`-seed optimistic mean = **19.8483**
+  - plain no-spec `5`-seed mean = **20.8917**
+
+Evidence-supported takeaway:
+
+> The current canonical transfer ceiling cannot be explained only by the source-side supervised reproduction gap. Under the same reproduced MambAtt family, full target supervision on `FD003` already reaches about **14.11**, which is still far below every current `FD001→FD003` cross-domain few-shot result.
+
+Important caveat:
+
+- this is **not** a pure domain-shift estimate:
+  - it also removes the few-shot label constraint
+- therefore it should be read as:
+  - a **target-domain oracle headroom control**
+  - not as a direct decomposition of domain shift alone
+
+### 5.5 Target-domain oracle control on `FD004`
+
+We added the same target-domain full-supervised oracle on the harder
+multi-condition subset `FD004`, again using the current best local supervised
+recipe:
+
+- subset = `FD004`
+- `transformer_norm_mode = post`
+- `dim_feedforward = 84`
+- `val_all_windows = True`
+- `lr = 5e-4`
+- `weight_decay = 1e-4`
+- seeds `42,43,44`
+- output:
+  - `/home/shelterpl/cd_mambatt/runs/oracle_supervised_fd004_post_dff84_valall_lr5e4_wd1e4/FD004`
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/mambatt_target_oracle_fd004_decomposition_2026-04-13.json`
+
+Results:
+
+- fixed-split mean test RMSE = **16.4495**
+- fixed-split std test RMSE = **0.0096**
+
+Why this matters:
+
+- current `FD001→FD004` cross-domain references:
+  - stable v2 `5`-seed mean = **24.3449**
+  - SPD high-LR `3`-seed mean = **23.72**
+- the target oracle is still roughly **7.3 to 7.9 RMSE** below those transfer
+  results
+
+Evidence-supported takeaway:
+
+> Even on the harder `FD004` target, the current reproduced MambAtt family can
+> reach about **16.45** under full target supervision, so the present
+> `FD001→FD004` transfer ceiling still leaves substantial headroom beyond the
+> current few-shot adaptation line.
+
+Important caveat:
+
+- this is again **not** a pure domain-shift estimate:
+  - it also removes the few-shot label constraint
+- `FD004` itself is harder than `FD001` under the current reproduced recipe:
+  - so this control should be used to measure remaining headroom on the target
+    task, not to compare subset difficulty and transfer penalty with one number
 
 ## 6. Gap to the paper
 

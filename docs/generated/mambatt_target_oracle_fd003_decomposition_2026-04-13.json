@@ -1,0 +1,64 @@
+{
+  "date": "2026-04-13",
+  "purpose": "separate the MambAtt backbone quality question from the cross-domain few-shot penalty by adding a target-domain full-supervised control on FD003",
+  "new_target_oracle_run": {
+    "subset": "FD003",
+    "run_root": "/home/shelterpl/cd_mambatt/runs/oracle_supervised_fd003_post_dff84_valall_lr5e4_wd1e4/FD003",
+    "recipe": {
+      "transformer_norm_mode": "post",
+      "dim_feedforward": 84,
+      "val_all_windows": true,
+      "lr": 0.0005,
+      "weight_decay": 0.0001,
+      "dropout": 0.5,
+      "window_size": 20,
+      "stride": 1,
+      "rul_clip": 125,
+      "split_mode": "fixed",
+      "split_seed": 42,
+      "seeds": [
+        42,
+        43,
+        44
+      ]
+    },
+    "result": {
+      "mean_test_rmse": 14.112766210658243,
+      "std_test_rmse": 0.19319324071634836,
+      "best_test_rmse": 13.864472704312544,
+      "best_val_rmse": 15.148332915827787
+    }
+  },
+  "reference_numbers": {
+    "fd001_supervised_fixed_mean_test_rmse": 15.0937,
+    "fd001_supervised_resampled_mean_test_rmse": 15.3024,
+    "fd001_to_fd003_direct_transfer_mean_rmse": 34.8204,
+    "fd001_to_fd003_cd_v2_5seed_mean_rmse": 21.9608,
+    "fd001_to_fd003_plain_nospec_5seed_mean_rmse": 20.891727028820746,
+    "fd001_to_fd003_ssl_union_3seed_mean_rmse": 19.848294679986953,
+    "fd001_to_fd003_ssl_selective_freeze_5seed_mean_rmse": 20.89946052893881
+  },
+  "delta_vs_fd003_target_oracle": {
+    "fd001_supervised_fixed_minus_fd003_oracle": 0.9809337893417571,
+    "fd001_supervised_resampled_minus_fd003_oracle": 1.1896337893417574,
+    "fd001_to_fd003_direct_transfer_minus_fd003_oracle": 20.707633789341756,
+    "fd001_to_fd003_cd_v2_5seed_minus_fd003_oracle": 7.8480337893417575,
+    "fd001_to_fd003_plain_nospec_5seed_minus_fd003_oracle": 6.7789608181625035,
+    "fd001_to_fd003_ssl_union_3seed_minus_fd003_oracle": 5.73552846932871,
+    "fd001_to_fd003_ssl_selective_freeze_5seed_minus_fd003_oracle": 6.786694318280567
+  },
+  "evidence_supported_conclusions": [
+    "The project previously lacked a target-domain full-supervised control on FD003; this run now provides that missing benchmark.",
+    "Under the current reproduced MambAtt recipe, FD003 full supervision reaches 14.11 mean RMSE, which is far below every current FD001_TO_FD003 cross-domain few-shot result.",
+    "Therefore the current canonical cross-domain line still leaves substantial headroom relative to what the same backbone can do when it receives full target labels.",
+    "This means the remaining gap on FD001_TO_FD003 cannot be attributed only to the source-domain supervised reproduction gap; there is also a large cross-domain/few-shot adaptation gap."
+  ],
+  "important_caveat": [
+    "The gap between the FD003 target oracle and FD001_TO_FD003 transfer results is not a pure domain-shift penalty, because it also removes the few-shot label constraint.",
+    "The comparison does not prove source-backbone quality is unimportant; it shows the strong single-factor explanation is incomplete."
+  ],
+  "next_useful_controls": [
+    "Run the same target-only full-supervised oracle on FD004 to quantify headroom on the multi-condition target.",
+    "If needed, add a target-only few-shot-without-source initialization control to isolate how much of the remaining gap comes from transfer initialization versus label scarcity."
+  ]
+}

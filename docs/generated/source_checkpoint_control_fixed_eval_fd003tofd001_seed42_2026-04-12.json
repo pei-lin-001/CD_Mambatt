@@ -1,0 +1,104 @@
+{
+  "reference_result_json": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/seed_42/result.json",
+  "seed": 44,
+  "device": "cuda",
+  "source_split_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/splits/source_engine_split.json",
+  "target_partition_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/splits/target_few_shot_seed42.json",
+  "source_meta": {
+    "train_windows_shape": [
+      18322,
+      20,
+      21
+    ],
+    "val_windows_shape": [
+      4498,
+      20,
+      21
+    ],
+    "test_windows_shape": [
+      100,
+      20,
+      21
+    ],
+    "train_unit_count": 80,
+    "val_unit_count": 20
+  },
+  "target_direct_meta": {
+    "test_windows_shape": [
+      100,
+      20,
+      21
+    ],
+    "test_unit_count": 100
+  },
+  "results": [
+    {
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd003tofd001_20260409/FD003_TO_FD001/seed_42/source/best.pt",
+      "load_missing_keys": [],
+      "load_unexpected_keys": [],
+      "source_test": {
+        "rmse": 15.888668465474511,
+        "mae": 11.530985746383667,
+        "score": 721.8473775050448
+      },
+      "target_direct": {
+        "rmse": 30.636264975967283,
+        "mae": 23.493109238147735,
+        "score": 12112.70890194313
+      },
+      "checkpoint_best_epoch": 18,
+      "checkpoint_best_val_rmse": 14.87941096190792
+    },
+    {
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_nospec_fd003tofd001_20260409/FD003_TO_FD001/seed_42/source/best.pt",
+      "load_missing_keys": [],
+      "load_unexpected_keys": [],
+      "source_test": {
+        "rmse": 15.704439068467918,
+        "mae": 11.126182141304016,
+        "score": 710.3959306449223
+      },
+      "target_direct": {
+        "rmse": 24.07061671979232,
+        "mae": 18.72462151527405,
+        "score": 3400.4964033711367
+      },
+      "checkpoint_best_epoch": 21,
+      "checkpoint_best_val_rmse": 16.491328760812884
+    },
+    {
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/spd_best_fd003_to_fd001/FD003_TO_FD001/seed_42/source/best.pt",
+      "load_missing_keys": [],
+      "load_unexpected_keys": [],
+      "source_test": {
+        "rmse": 15.958087057782308,
+        "mae": 11.623163118362427,
+        "score": 728.1646519567079
+      },
+      "target_direct": {
+        "rmse": 30.481745270604343,
+        "mae": 23.403293588161468,
+        "score": 12000.304007037024
+      },
+      "checkpoint_best_epoch": 18,
+      "checkpoint_best_val_rmse": 14.880227601727107
+    },
+    {
+      "checkpoint_path": "/home/shelterpl/cd_mambatt/runs/spd_highlr_frontend_multitask/FD003_TO_FD001/seed_42/source/best.pt",
+      "load_missing_keys": [],
+      "load_unexpected_keys": [],
+      "source_test": {
+        "rmse": 15.85760889908607,
+        "mae": 11.467399396896361,
+        "score": 725.6868512009024
+      },
+      "target_direct": {
+        "rmse": 30.623329758224457,
+        "mae": 23.4705641913414,
+        "score": 12021.103920237756
+      },
+      "checkpoint_best_epoch": 18,
+      "checkpoint_best_val_rmse": 14.855667900273726
+    }
+  ]
+}

@@ -27,7 +27,7 @@ from cd_mambatt.self_supervised import (
     ntuplet_loss,
 )
 from train_cd_mambatt_v1 import fit_source_stage
-from train_cd_mambatt_v3 import build_target_monotonic_loader, fit_cd_pseudo_stage
+from train_cd_mambatt_v3 import build_target_monotonic_loader, fit_cd_pseudo_stage, uses_domain_conditioning
 from train_cross_domain_baseline import build_source_stage_data
 from train_self_supervised import (
     apply_ssl_preset,
@@ -45,6 +45,13 @@ def load_record(run_root: Path, seed: int) -> dict[str, object]:
 
 def args_from_record(record: dict[str, object]) -> Namespace:
     cd_stage = record["cd_stage"]
+    inv_alignment_mode = str(cd_stage.get("inv_alignment_mode", "mmd") or "mmd")
+    lambda_inv_mmd = float(
+        cd_stage.get(
+            "lambda_inv_mmd",
+            cd_stage.get("lambda_domain_adv", 0.1 if inv_alignment_mode == "mmd" else 0.0),
+        )
+    )
     return Namespace(
         root="/home/shelterpl/data/CMAPSS",
         task=str(record["task"]),
@@ -80,34 +87,15 @@ def args_from_record(record: dict[str, object]) -> Namespace:
         mmd_sigmas="1,2,4,8,16",
         lambda_source_stage=float(cd_stage.get("lambda_source_stage", 1.0)),
         lambda_pseudo=float(cd_stage.get("lambda_pseudo", 0.5)),
-        lambda_contrastive=float(cd_stage.get("lambda_contrastive", 0.0)),
         lambda_monotonic=float(cd_stage.get("lambda_monotonic", 0.05)),
-        inv_alignment_mode=str(cd_stage.get("inv_alignment_mode", "mmd")),
-        lambda_domain_adv=float(cd_stage.get("lambda_domain_adv", 0.0)),
-        lambda_inv_mmd=float(cd_stage.get("lambda_inv_mmd", 0.1)),
+        inv_alignment_mode=inv_alignment_mode,
+        lambda_inv_mmd=lambda_inv_mmd,
         lambda_spec_domain=float(cd_stage.get("lambda_spec_domain", 0.0)),
-        lambda_conditional_inv_mmd=float(cd_stage.get("lambda_conditional_inv_mmd", 0.0)),
-        lambda_conditional_proto=float(cd_stage.get("lambda_conditional_proto", 0.0)),
-        lambda_conditional_proto_ce=float(cd_stage.get("lambda_conditional_proto_ce", 0.0)),
-        conditional_target_scope=str(cd_stage.get("conditional_target_scope", "labeled_accepted")),
-        lambda_inv_spec_orth=float(cd_stage.get("lambda_inv_spec_orth", 0.0)),
-        lambda_inv_spec_xcorr=float(cd_stage.get("lambda_inv_spec_xcorr", 0.0)),
-        lambda_spec_residual=float(cd_stage.get("lambda_spec_residual", 0.0)),
-        lambda_inv_aux=float(cd_stage.get("lambda_inv_aux", 0.0)),
-        lambda_spec_reconstruction=float(cd_stage.get("lambda_spec_reconstruction", 0.0)),
         lambda_transformer_domain_adapter_l2=float(cd_stage.get("lambda_transformer_domain_adapter_l2", 0.0)),
-        semantic_warmup_epochs=int(cd_stage.get("semantic_warmup_epochs", 0)),
-        semantic_warmup_lr=float(cd_stage.get("semantic_warmup_lr", 5e-4)),
         adaptation_freeze_mode=str(cd_stage.get("adaptation_freeze_mode", "none") or "none"),
         adaptation_freeze_epochs=int(cd_stage.get("adaptation_freeze_epochs", 0) or 0),
-        grl_lambda=float(cd_stage.get("grl_lambda", 1.0)),
-        grl_warmup_epochs=int(cd_stage.get("grl_warmup_epochs", 5)),
         domain_feature_tap=str(cd_stage.get("domain_feature_tap", "inv_mean")),
-        domain_adv_hidden_dim=int(cd_stage.get("domain_adv_hidden_dim", 16)),
-        domain_adv_dropout=0.0,
         stage_feature_mode=str(cd_stage.get("stage_feature_mode", "combined")),
-        contrastive_temperature=0.1,
-        disable_contrastive_feature_normalization=False,
         monotonic_margin=0.0,
         monotonic_pair_gap=1,
         monotonic_pair_stride=1,
@@ -475,8 +463,20 @@ def main() -> None:
         float(args.target_scale),
         None if float(args.grad_clip_norm) <= 0 else float(args.grad_clip_norm),
     )
-    source_test_metrics = evaluate(model, source_loaders["test"], device, float(args.target_scale))
-    target_direct_metrics = evaluate(model, target_loaders["test"], device, float(args.target_scale))
+    source_test_metrics = evaluate(
+        model,
+        source_loaders["test"],
+        device,
+        float(args.target_scale),
+        domain_label_value=0 if uses_domain_conditioning(model) else None,
+    )
+    target_direct_metrics = evaluate(
+        model,
+        target_loaders["test"],
+        device,
+        float(args.target_scale),
+        domain_label_value=1 if uses_domain_conditioning(model) else None,
+    )
 
     cd_stage = fit_cd_pseudo_stage(
         args,
@@ -490,7 +490,13 @@ def main() -> None:
         float(args.target_scale),
         None if float(args.grad_clip_norm) <= 0 else float(args.grad_clip_norm),
     )
-    test_metrics = evaluate(model, target_loaders["test"], device, float(args.target_scale))
+    test_metrics = evaluate(
+        model,
+        target_loaders["test"],
+        device,
+        float(args.target_scale),
+        domain_label_value=1 if uses_domain_conditioning(model) else None,
+    )
     result = {
         "experiment_name": args_cli.experiment_name,
         "seed": int(args_cli.seed),

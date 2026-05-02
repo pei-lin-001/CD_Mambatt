@@ -1,6 +1,6 @@
 # Cross-Domain Experiment Log
 
-Last updated: 2026-04-03
+Last updated: 2026-04-12
 
 This file records the end-to-end cross-domain experiments for the
 `CD-MambAtt` project. From now on, every completed run should be added
@@ -2718,3 +2718,741 @@ Earlier tests (from `big_lever_test.py` first run before crash):
 
 - primary note:
   - `docs/history/experiment_notes/task_embedding_maml_paper_alignment_probe_2026-04-09.md`
+
+### 13.15 Loss-function consolidation for the maintained v3 path
+
+- date: 2026-04-12
+- code update:
+  - `train_cd_mambatt_v3.py`
+  - `scripts/run_targeted_adaptation_experiment.py`
+  - `scripts/run_ssl_targeted_adaptation_experiment.py`
+
+- maintained adaptation objective after consolidation:
+  - source supervised RUL loss
+  - target few-shot supervised RUL loss
+  - global feature MMD (`lambda_mmd`)
+  - source stage classification (`lambda_source_stage`)
+  - target pseudo-stage classification (`lambda_pseudo`)
+  - local monotonicity (`lambda_monotonic`)
+  - optional invariant-path MMD (`lambda_inv_mmd`)
+  - optional specific-branch domain CE (`lambda_spec_domain`)
+  - optional Transformer domain-adapter L2 penalty
+    (`lambda_transformer_domain_adapter_l2`) when that branch is enabled
+
+- retired from the maintained v3 main path:
+  - `lambda_contrastive`
+  - GRL / domain-adversarial branch:
+    - `lambda_domain_adv`
+    - `grl_lambda`
+    - `grl_warmup_epochs`
+    - discriminator-only settings
+  - semantic-SPD conditional / auxiliary losses:
+    - `lambda_conditional_inv_mmd`
+    - `lambda_conditional_proto`
+    - `lambda_conditional_proto_ce`
+    - `lambda_inv_spec_orth`
+    - `lambda_inv_spec_xcorr`
+    - `lambda_spec_residual`
+    - `lambda_inv_aux`
+    - `lambda_spec_reconstruction`
+    - `semantic_warmup_*`
+
+- evidence-supported reasons for retirement:
+  - contrastive:
+    - Sections 3.5 and 3.6 both failed to improve the v2 baseline
+    - Section 3.10 kept the practical default at `lambda_contrastive = 0.0`
+  - GRL / domain-adversarial branch:
+    - Sections 11.5 to 11.10 showed instability and poor multi-seed robustness
+    - Section 11.12 showed direct invariant-path MMD improves over GRL on the
+      same three seeds
+    - Section 11.15 kept `lambda_inv_mmd = 0.1` as the better-supported SPD
+      alignment setting
+  - semantic-SPD conditional / auxiliary line:
+    - Sections 11.21 to 11.28 never produced a full result that beat the older
+      SPD inv-MMD reference (**23.3498**)
+    - even the warmup-improved paired estimate in Section 11.28
+      (**23.8310**) remained worse than the inv-MMD core line
+  - canonical-path relevance after the SSL reassessment:
+    - Sections 13.11 to 13.13 established a promising **3-seed** union-SSL
+      signal on top of the simplified no-spec objective
+    - Section 13.16 later showed that this SSL gain is **not robustly
+      supported** after extending the same protocol to `5` seeds
+    - the maintenance simplification still stands because both the plain
+      no-spec baseline and the union-SSL follow-up use the same simplified loss
+      core rather than the retired loss family
+
+- current judgment:
+  - this is a **maintenance simplification**, not a new performance claim
+  - the retired terms remain documented in the history sections above
+  - the reason to remove them from the main entry is to reduce false branches,
+    stale CLI options, and result fields that no longer correspond to the
+    verified training objective
+  - we are **not** claiming these ideas are impossible to revive later; only
+    that the current evidence does not justify keeping them in the maintained
+    path
+
+### 13.16 Cross-domain union SSL + no-spec adaptation reassessment (`FD001→FD003`, 5 seeds)
+
+- date: 2026-04-12
+- purpose:
+  - extend the promising `3`-seed union-SSL result from Sections `13.11` to
+    `13.13` to `5` seeds under the exact same no-spec downstream protocol
+- added runs:
+  - baseline seeds `45,46`:
+    - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd001tofd003_seed45_46_20260412/FD001_TO_FD003`
+  - SSL seeds `45,46`:
+    - `/home/shelterpl/cd_mambatt/runs/ssl_targeted_experiments/ssl_union_paperfull_frontend_fd001tofd003_seed45_46_20260412/FD001_TO_FD003`
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/ssl_union_nospec_frontend_5seed_reassessment_2026-04-12.json`
+
+- per-seed adapted RMSE:
+
+| Seed | Baseline no-spec | SSL + no-spec | Delta (SSL - baseline) |
+|---:|---:|---:|---:|
+| 42 | 22.2752 | 21.3735 | -0.9018 |
+| 43 | 19.6408 | 18.6110 | -1.0298 |
+| 44 | 19.9500 | 19.5604 | -0.3896 |
+| 45 | 24.1368 | 23.1767 | -0.9601 |
+| 46 | 18.4558 | 26.4250 | +7.9693 |
+| **mean** | **20.8917 ± 2.2820** | **21.8293 ± 3.1084** | **+0.9376** |
+
+- additional aggregate observations:
+  - mean direct target RMSE:
+    - baseline no-spec: **43.3926**
+    - SSL + no-spec: **39.3195**
+    - delta: **-4.0731**
+  - mean source RMSE:
+    - baseline no-spec: **16.1985**
+    - SSL + no-spec: **16.6621**
+    - delta: **+0.4637**
+  - sign pattern:
+    - SSL is better on `4 / 5` seeds
+    - SSL is worse on `1 / 5` seeds
+    - that one bad seed (`46`) is severe enough to reverse the mean
+
+- evidence-supported conclusion:
+  - the earlier `3`-seed result was real, but it does **not** justify the
+    stronger claim that union SSL is a robustly better canonical default on
+    `FD001→FD003`
+  - after the `5`-seed extension, the honest aggregate picture is:
+    - union SSL often helps, but its variance is currently too large
+    - the mean result is now **worse** than the plain no-spec baseline
+  - therefore:
+    - **“union SSL + no-spec is the current best verified canonical config” is
+      no longer supported as a robust statement**
+
+- interpretation to test rather than assume:
+  - the updated evidence suggests a **split-sensitive failure mode** rather than
+    a uniformly bad SSL encoder
+  - this should be diagnosed directly on the failing seed before proposing new
+    losses or architecture changes
+
+### 13.17 Directed diagnosis of the SSL collapse on `seed 46`
+
+- date: 2026-04-12
+- generated diagnostic:
+  - `/home/shelterpl/cd_mambatt/docs/generated/ssl_union_seed46_collapse_diagnostic_fd001tofd003_2026-04-12.json`
+- protocol checks:
+  - same source split path: **yes**
+  - same target few-shot partition path: **yes**
+  - same downstream adaptation protocol:
+    - `lambda_spec_domain = 0.0`
+    - `target_lr = 1.5e-3`
+    - cosine scheduler
+    - `domain_feature_tap = frontend_mean`
+
+- result-level comparison (`seed 46`):
+  - baseline no-spec:
+    - source RMSE = **17.1174**
+    - direct target RMSE = **46.4207**
+    - adapted RMSE = **18.4558**
+    - CD best epoch = **1**
+    - CD best val RMSE = **22.2464**
+  - SSL + no-spec:
+    - source RMSE = **17.7193**
+    - direct target RMSE = **41.8146**
+    - adapted RMSE = **26.4250**
+    - CD best epoch = **1**
+    - CD best val RMSE = **28.0683**
+
+- adaptation-dynamics evidence from logs:
+  - baseline CD stage (`seed 46`):
+    - epoch-1 val RMSE = **22.2464**
+    - epoch-20 val RMSE = **29.7437**
+    - gate mean: **0.1337 → 0.2392**
+    - pseudo acceptance: **0.0332 → 0.6400**
+    - inv-MMD loss: **0.7199 → 0.6088**
+  - SSL CD stage (`seed 46`):
+    - epoch-1 val RMSE = **28.0683**
+    - epoch-20 val RMSE = **29.9555**
+    - gate mean: **0.0440 → 0.0738**
+    - pseudo acceptance: **0.0140 → 0.6186**
+    - inv-MMD loss: **0.8239 → 0.7360**
+
+- evidence-supported diagnosis:
+  - SSL `seed 46` is **not** failing because the encoder is unusable before
+    adaptation:
+    - direct-transfer RMSE is actually **better** with SSL
+      (**46.4207 → 41.8146**)
+  - the failure appears **immediately at adaptation initialization**:
+    - SSL is already much worse at epoch `1`
+    - later epochs never recover that gap
+  - the failure is **not** a simple “late pseudo-label blow-up” story:
+    - both baseline and SSL end with high pseudo acceptance
+    - but the validation gap is already present before that regime
+  - on this seed, SSL keeps the gate much smaller and the invariant-MMD loss
+    higher throughout adaptation, which is consistent with:
+    - a worse early few-shot adaptation regime
+    - and/or a weaker invariant-path alignment regime on this split
+
+- bounded next step implied by the diagnosis:
+  - this pointed to two targeted follow-ups:
+    - first, compare the **epoch-1 few-shot target fit** of baseline vs SSL on
+      this seed
+    - then, if needed, strip away unlabeled losses to test whether the collapse
+      is mainly caused by the adaptation objective rather than the checkpoint
+      itself
+
+### 13.18 Follow-up probe: epoch-1 few-shot target fit on `seed 46`
+
+- date: 2026-04-12
+- generated probe:
+  - `/home/shelterpl/cd_mambatt/docs/generated/ssl_union_seed46_epoch1_fewshot_fit_probe_2026-04-12.json`
+- compared checkpoints:
+  - baseline source checkpoint
+  - baseline adaptation best checkpoint (epoch `1`)
+  - SSL source checkpoint
+  - SSL adaptation best checkpoint (epoch `1`)
+- shared target partition:
+  - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_fd001tofd003_seed45_46_20260412/FD001_TO_FD003/splits/target_few_shot_seed46.json`
+
+- key results:
+  - source initialization on few-shot labeled target windows:
+    - baseline source RMSE = **39.0265**
+    - SSL source RMSE = **34.0379**
+    - delta (SSL - baseline) = **-4.9886**
+  - epoch-1 adaptation checkpoint on few-shot labeled target windows:
+    - baseline RMSE = **9.0264**
+    - SSL RMSE = **8.7499**
+    - delta (SSL - baseline) = **-0.2765**
+  - but on the same epoch-1 checkpoints:
+    - target validation RMSE delta (SSL - baseline) = **+5.8219**
+    - target test RMSE delta (SSL - baseline) = **+7.9693**
+
+- evidence-supported conclusion:
+  - the hypothesis “SSL fails on `seed 46` because it starts from a worse
+    supervised few-shot target fit” is **falsified**
+  - on this seed, SSL is actually **better** on the few-shot labeled windows
+    both before adaptation and at the epoch-1 checkpoint
+  - therefore the regression is better described as:
+    - **worse target generalization / transfer behavior**
+    - not worse few-shot training-set fit
+
+### 13.19 Follow-up probe: supervised-only adaptation ablation on `seed 46`
+
+- date: 2026-04-12
+- question:
+  - if we remove the unlabeled alignment / pseudo / monotonic losses, does the
+    SSL collapse disappear?
+- runs:
+  - baseline source checkpoint + supervised-only adaptation:
+    - `/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed46_baseline_supervised_only_probe_20260412/FD001_TO_FD003/seed_46/result.json`
+  - SSL source checkpoint + supervised-only adaptation:
+    - `/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/seed46_ssl_supervised_only_probe_20260412/FD001_TO_FD003/seed_46/result.json`
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/seed46_supervised_only_ablation_fd001tofd003_2026-04-12.json`
+- adaptation settings:
+  - `lambda_mmd = 0.0`
+  - `lambda_source_stage = 0.0`
+  - `lambda_inv_mmd = 0.0`
+  - `lambda_pseudo = 0.0`
+  - `lambda_monotonic = 0.0`
+  - `lambda_spec_domain = 0.0`
+  - keep source loss + target few-shot supervised loss only
+
+- result summary:
+
+| Setting | Best val RMSE | Test RMSE |
+|---|---:|---:|
+| baseline full objective | 22.2464 | **18.4558** |
+| baseline supervised-only | 25.5306 | 19.0747 |
+| SSL full objective | 28.0683 | 26.4250 |
+| SSL supervised-only | 27.2404 | 24.8507 |
+
+- evidence-supported conclusion:
+  - dropping the unlabeled losses helps the SSL bad seed:
+    - **26.4250 → 24.8507**
+    - gain = **1.5743**
+  - dropping the same losses slightly hurts the baseline bad seed:
+    - **18.4558 → 19.0747**
+    - regression = **0.6190**
+  - therefore, the full unlabeled objective is part of the SSL collapse on
+    this seed
+  - but the collapse is **not fully explained** by those losses:
+    - even with supervised-only adaptation, SSL is still much worse than the
+      baseline on the same seed
+      (**24.8507 vs 19.0747**)
+
+- updated diagnosis after Sections `13.17` to `13.19`:
+  - what is supported by evidence:
+    - SSL `seed 46` is not failing because of a bad direct-transfer encoder
+    - SSL `seed 46` is not failing because of worse few-shot labeled fit
+    - the unlabeled adaptation losses make the SSL failure worse
+    - but removing them only partially rescues the seed
+  - what remains open:
+    - why the SSL initialization generalizes worse to validation/test even when
+      it fits the few-shot labeled set at least as well
+
+### 13.20 Follow-up stabilization line: selective adaptation freezing for union SSL
+
+- date: 2026-04-12
+- question:
+  - can we stabilize the union-SSL branch by changing **adaptation dynamics /
+    trainable scope**, rather than adding more losses?
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/ssl_union_selective_freeze_reassessment_2026-04-12.json`
+
+#### 13.20.1 Targeted `seed 46` probes
+
+All probes reused the same SSL source checkpoint and the same few-shot
+partition as the failing canonical run.
+
+| Setting | Key change | Test RMSE |
+|---|---|---:|
+| original SSL full objective | reference | 26.4250 |
+| lower-LR full objective | `target_lr = 5e-4` | 25.1570 |
+| `head_only` | head only, no unfreeze | 36.4500 |
+| `head_only` 5 epochs then full | short warm-start | 25.5582 |
+| `transformer_head` | freeze Mamba, adapt Transformer + head | 24.5671 |
+| `transformer_head` 5 epochs then full | warm-start then unfreeze | 24.5671 |
+| `spec_gate_transformer_head` | adapt spec/gate + Transformer + head | **24.1054** |
+
+- evidence-supported conclusions from the probe ladder:
+  - lower LR helps, so the SSL bad seed is genuinely sensitive to adaptation
+    dynamics
+  - `head_only` is too restrictive; the model still needs substantial
+    adaptation capacity
+  - the best rescue comes from **freezing the shared Mamba / invariant core**
+    while still allowing the **specific projections, gate projection,
+    Transformer blocks, and head** to adapt
+  - the `transformer_head` warm-start did not beat the static freeze because
+    the best checkpoint remained in the frozen phase before unfreezing
+
+#### 13.20.2 `5`-seed reassessment of the best selective-freeze candidate
+
+Candidate:
+
+- `adaptation_freeze_mode = spec_gate_transformer_head`
+- keep the same union-SSL checkpoint family, same downstream losses, and the
+  same strong optimization protocol
+
+Per-seed comparison (`FD001→FD003`, seeds `42,43,44,45,46`):
+
+| Seed | Baseline no-spec | Original SSL full | Selective-freeze SSL | Delta vs original SSL |
+|---:|---:|---:|---:|---:|
+| 42 | 22.2752 | 21.3735 | **20.0171** | -1.3564 |
+| 43 | 19.6408 | **18.6110** | 19.7157 | +1.1048 |
+| 44 | 19.9500 | 19.5604 | **19.0361** | -0.5243 |
+| 45 | 24.1368 | 23.1767 | **21.6230** | -1.5537 |
+| 46 | **18.4558** | 26.4250 | **24.1054** | -2.3197 |
+
+Aggregate comparison:
+
+| Aggregate | Baseline no-spec | Original SSL full | Selective-freeze SSL |
+|---|---:|---:|---:|
+| mean adapted RMSE | **20.8917 ± 2.2820** | 21.8293 ± 3.1084 | 20.8995 ± 2.0281 |
+
+- sign count:
+  - vs original SSL full:
+    - better on **4 / 5** seeds
+    - worse on **1 / 5** seed
+  - vs baseline no-spec:
+    - better on **3 / 5** seeds
+    - worse on **2 / 5** seeds
+
+- evidence-supported conclusion:
+  - the selective-freeze line is the **first tested stabilization mechanism**
+    that materially repairs the union-SSL variance problem without adding new
+    losses
+  - relative to the original SSL full line, it:
+    - improves the `5`-seed mean by **-0.9299 RMSE**
+    - reduces sample standard deviation from **3.1084 → 2.0281**
+  - relative to baseline no-spec, it is **not a new best default** yet:
+    - mean RMSE is effectively tied
+      (**20.8995 vs 20.8917**)
+  - therefore the current evidence supports:
+    - **adaptation scope / dynamics** are a real bottleneck
+    - freezing the shared Mamba core while preserving spec/gate plasticity is
+      a credible next research direction
+    - but the branch still needs either:
+      - a better rule for **when** to enable this selective freeze
+      - or validation on additional transfer pairs before it can replace the
+        plain no-spec baseline
+
+### 13.21 Cross-task check: selective freeze on hard task `FD003→FD001`
+
+- date: 2026-04-12
+- question:
+  - does the canonical selective-freeze SSL stabilization generalize to the
+    harder `FD003→FD001` direction?
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/ssl_union_hard_task_freeze_reassessment_fd003tofd001_2026-04-12.json`
+- candidate:
+  - `adaptation_freeze_mode = spec_gate_transformer_head`
+- shared protocol:
+  - reuse the existing union-SSL source checkpoints on `FD003→FD001`
+  - keep `lambda_mmd = 0.1`
+  - keep `lambda_source_stage = 1.0`
+  - keep `lambda_inv_mmd = 0.1`
+  - keep `lambda_pseudo = 0.5`
+  - keep `lambda_monotonic = 0.05`
+  - keep `lambda_spec_domain = 0.0`
+  - keep `domain_feature_tap = frontend_mean`
+  - keep `target_lr = 1.5e-3`, cosine schedule, `target_lr_min = 1e-5`
+
+Per-seed comparison (`FD003→FD001`, seeds `42,43,44`):
+
+| Seed | Baseline no-spec | Original SSL full | Selective-freeze SSL | Delta vs original SSL |
+|---:|---:|---:|---:|---:|
+| 42 | 20.3289 | **19.9728** | 20.2480 | +0.2753 |
+| 43 | 19.5640 | 19.4655 | **18.7522** | -0.7133 |
+| 44 | **20.8613** | 22.4487 | 23.0168 | +0.5682 |
+
+Aggregate comparison:
+
+| Aggregate | Baseline no-spec | Original SSL full | Selective-freeze SSL |
+|---|---:|---:|---:|
+| mean adapted RMSE | **20.2514 ± 0.6521** | 20.6290 ± 1.5962 | 20.6724 ± 2.1637 |
+
+- sign count:
+  - vs original SSL full:
+    - better on **1 / 3** seeds
+    - worse on **2 / 3** seeds
+  - vs baseline no-spec:
+    - better on **2 / 3** seeds
+    - worse on **1 / 3** seed
+
+- evidence-supported conclusions:
+  - the canonical selective-freeze candidate **does not generalize** to the
+    hard task as a new default:
+    - its `3`-seed mean is slightly worse than original SSL
+    - and clearly worse than the plain no-spec baseline mean
+  - the freeze is still **doing something real** rather than acting as a no-op:
+    - on all three seeds it reduces the best-epoch invariant-MMD loss relative
+      to the original SSL run
+  - that reduction is **not sufficient** for hard-task improvement:
+    - `seed 44` lowers best-epoch inv-MMD
+      (**0.4365 → 0.3732**)
+    - but target test RMSE still worsens
+      (**22.4487 → 23.0168**)
+  - this updates the project-level conclusion from Section `13.20`:
+    - selective freezing is a **task-conditional stabilization mechanism**
+    - not a universal SSL default
+
+### 13.22 Hard-task bad-seed rescue check: `FD003→FD001`, `seed 44`
+
+- date: 2026-04-12
+- question:
+  - if the hard-task SSL failure is mainly caused by overly aggressive
+    adaptation, do milder updates rescue the bad seed?
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/ssl_union_hard_task_freeze_reassessment_fd003tofd001_2026-04-12.json`
+- shared source checkpoint:
+  - original union-SSL `FD003→FD001`, `seed 44`
+
+Probe results:
+
+| Setting | Key change | Test RMSE |
+|---|---|---:|
+| original SSL full objective | reference | **22.4487** |
+| lower-LR full objective | `target_lr = 5e-4` | 23.3594 |
+| `transformer_head` | freeze Mamba, adapt Transformer + head | 23.0122 |
+| `spec_gate_transformer_head` | adapt spec/gate + Transformer + head | 23.0168 |
+
+- supporting observations from the best checkpoints:
+  - original SSL full:
+    - best epoch = `2`
+    - best inv-MMD = **0.4365**
+    - best pseudo acceptance = **0.0222**
+  - lower-LR full:
+    - best epoch = `2`
+    - best inv-MMD = **0.4161**
+    - best pseudo acceptance = **0.0389**
+  - `transformer_head`:
+    - best epoch = `8`
+    - best inv-MMD = **0.3732**
+    - best pseudo acceptance = **0.0473**
+  - `spec_gate_transformer_head`:
+    - best epoch = `8`
+    - best inv-MMD = **0.3732**
+    - best pseudo acceptance = **0.0430**
+
+- evidence-supported conclusions:
+  - on this hard-task bad seed, **neither** lower LR **nor** lighter frozen
+    adaptation rescues the SSL branch
+  - both frozen variants reduce invariant-MMD substantially, but still remain
+    worse than the original full SSL run
+  - therefore the current hard-task failure is **not** explained by a simple
+    “the model is updating too aggressively” story
+  - the stronger interpretation supported by the current evidence is:
+    - the usefulness of adaptation freezing depends on task / seed regime
+    - and the hard task needs a more discriminative decision rule than a
+      globally fixed freeze policy
+
+### 13.23 Target-only 5-shot control: `FD001→FD003`
+
+- date: 2026-04-13
+- question:
+  - on the canonical task, how much of the current gain comes from target
+    few-shot labels alone, and how much still comes from source initialization?
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/mambatt_target_only_fewshot_decomposition_2026-04-13.json`
+- matched cross-domain reference:
+  - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_20260409/FD001_TO_FD003`
+- target-only control:
+  - `/home/shelterpl/cd_mambatt/runs/target_only_fewshot_controls/fd001tofd003_targetonly5shot_matchv3_20260413/FD001_TO_FD003`
+- controlled protocol:
+  - reuse the exact same target few-shot partitions from the matched
+    cross-domain run (`seeds 42,43,44`)
+  - keep the same target-stage recipe:
+    - `target_lr = 1.5e-3`
+    - cosine schedule
+    - `target_epochs = 20`
+  - change only one thing:
+    - remove source initialization and train on the labeled target units from
+      random initialization
+
+Aggregate comparison:
+
+| Setting | Mean test RMSE | Std |
+|---|---:|---:|
+| direct transfer | 43.1865 | 6.2071 |
+| target-only 5-shot from scratch | 22.4650 | 0.5673 |
+| matched cross-domain 5-shot | **20.6220** | 1.1758 |
+| target oracle (full target supervision) | **14.1128** | 0.1932 |
+
+- evidence-supported conclusions:
+  - target-only 5-shot training from scratch already explains a large part of
+    the gain over direct transfer:
+    - **43.19 → 22.47**
+  - the **full current cross-domain pipeline** is still better than target-only
+    scratch on this task:
+    - matched cross-domain `5-shot` beats target-only scratch by about
+      **1.84 RMSE**
+  - the larger remaining problem is still visible after that:
+    - even the matched cross-domain line is still about **6.51 RMSE** above the
+      `FD003` target oracle
+
+### 13.24 Target-only 5-shot control: `FD001→FD004`
+
+- date: 2026-04-13
+- question:
+  - on the harder multi-condition target, does source initialization still help
+    beyond target 5-shot labels alone?
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/mambatt_target_only_fewshot_decomposition_2026-04-13.json`
+- matched cross-domain reference:
+  - `/home/shelterpl/cd_mambatt/runs/cd_mambatt_bestcfg_fd001_to_fd004_5seeds_fixcond/FD001_TO_FD004`
+- target-only control:
+  - `/home/shelterpl/cd_mambatt/runs/target_only_fewshot_controls/fd001tofd004_targetonly5shot_matchv2_20260413/FD001_TO_FD004`
+- controlled protocol:
+  - reuse the exact same target few-shot partitions from the matched
+    cross-domain run (`seeds 42,43,44,45,46`)
+  - align the maintained `v2` recipe:
+    - `mamba_block_mode = bare`
+    - `transformer_norm_mode = pre`
+    - `target_lr = 5e-4`
+    - `target_epochs = 20`
+  - again change only one thing:
+    - remove source initialization and train on the labeled target units from
+      random initialization
+
+Aggregate comparison:
+
+| Setting | Mean test RMSE | Std |
+|---|---:|---:|
+| direct transfer | 32.3820 | 5.2311 |
+| target-only 5-shot from scratch | 24.7623 | 1.7682 |
+| matched cross-domain 5-shot | **24.3449** | 2.4762 |
+| target oracle (full target supervision) | **16.4495** | 0.0096 |
+
+- evidence-supported conclusions:
+  - on `FD001→FD004`, target-only 5-shot from scratch already recovers most of
+    the gain over direct transfer:
+    - **32.38 → 24.76**
+  - the **full current cross-domain pipeline** is only modestly better than
+    target-only scratch in this matched setup:
+    - cross-domain beats target-only by about **0.42 RMSE**
+  - the dominant unresolved headroom is still elsewhere:
+    - the matched cross-domain line remains about **7.90 RMSE** above the
+      `FD004` target oracle
+
+### 13.25 Source-init-only decomposition on `FD001→FD003`
+
+- date: 2026-04-13
+- question:
+  - on the canonical task, how much of the gain comes from **source
+    initialization alone**, before adding any unlabeled/domain-adaptation
+    losses?
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/mambatt_target_only_fewshot_decomposition_2026-04-13.json`
+- matched run family:
+  - current no-spec mainline
+    `/home/shelterpl/cd_mambatt/runs/cd_mambatt_v3_frontend_highlr_nospecdiag_20260409/FD001_TO_FD003`
+- source-init-only control:
+  - `/home/shelterpl/cd_mambatt/runs/target_only_fewshot_controls/fd001tofd003_sourceinit5shot_matchv3_20260413/FD001_TO_FD003`
+- controlled protocol:
+  - reuse the exact same source checkpoints
+  - reuse the exact same target few-shot partitions
+  - keep the same target-stage optimizer settings
+  - remove all unlabeled/domain-adaptation terms:
+    - no MMD
+    - no source replay loss
+    - no pseudo labels
+    - no monotonic loss
+  - keep only:
+    - source-checkpoint initialization
+    - target few-shot supervised finetuning
+
+Aggregate decomposition:
+
+| Setting | Mean test RMSE | Std |
+|---|---:|---:|
+| target-only 5-shot scratch | 22.4650 | 0.5673 |
+| source-init-only supervised finetune | 21.9354 | 0.7531 |
+| full no-spec CD pipeline | **20.6220** | 1.1758 |
+| target oracle | **14.1128** | 0.1932 |
+
+- evidence-supported conclusions:
+  - source initialization alone gives only a **modest** canonical gain:
+    - **22.47 → 21.94**
+    - about **0.53 RMSE**
+  - the larger extra gain on this task comes from the rest of the current
+    cross-domain machinery:
+    - **21.94 → 20.62**
+    - about **1.31 RMSE**
+  - therefore, on `FD001→FD003`, the previous claim should be sharpened:
+    - not “source init explains the cross-domain advantage”
+    - but “source init helps a bit, and the unlabeled/domain-adaptation branch
+      still adds most of the current mainline gain over scratch”
+
+### 13.26 Source-init-only decomposition on `FD001→FD004`
+
+- date: 2026-04-13
+- question:
+  - on the harder multi-condition task, does the extra unlabeled/domain
+    adaptation machinery help once source initialization is already present?
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/mambatt_target_only_fewshot_decomposition_2026-04-13.json`
+- matched run family:
+  - stable `v2` mainline
+    `/home/shelterpl/cd_mambatt/runs/cd_mambatt_bestcfg_fd001_to_fd004_5seeds_fixcond/FD001_TO_FD004`
+- source-init-only control:
+  - `/home/shelterpl/cd_mambatt/runs/target_only_fewshot_controls/fd001tofd004_sourceinit5shot_matchv2_20260413/FD001_TO_FD004`
+- controlled protocol:
+  - reuse the exact same source checkpoints
+  - reuse the exact same target few-shot partitions
+  - keep the same `v2` target-stage optimizer settings
+  - remove all unlabeled/domain-adaptation losses and keep only
+    source-initialized target supervised finetuning
+
+Aggregate decomposition:
+
+| Setting | Mean test RMSE | Std |
+|---|---:|---:|
+| target-only 5-shot scratch | 24.7623 | 1.7682 |
+| source-init-only supervised finetune | **23.8626** | 2.3242 |
+| full CD-MambAtt v2 pipeline | 24.3449 | 2.4762 |
+| target oracle | **16.4495** | 0.0096 |
+
+- evidence-supported conclusions:
+  - source initialization alone still helps on this task:
+    - **24.76 → 23.86**
+    - about **0.90 RMSE**
+  - but the extra unlabeled/domain-adaptation machinery is slightly harmful in
+    this matched comparison:
+    - **23.86 → 24.34**
+    - regression of about **0.48 RMSE**
+  - therefore the small net gain of the full CD pipeline over scratch on
+    `FD001→FD004` is hiding two opposite effects:
+    - source initialization helps
+    - current unlabeled/domain-adaptation losses slightly hurt
+
+### 13.27 Loss-component decomposition on `FD001→FD004`
+
+- date: 2026-04-13
+- question:
+  - once source initialization is already present, which maintained loss
+    components are actually responsible for the remaining regression on
+    `FD001→FD004`?
+- generated summary:
+  - `/home/shelterpl/cd_mambatt/docs/generated/fd001tofd004_loss_component_decomposition_2026-04-13.json`
+- matched run family:
+  - stable `v2` mainline
+    `/home/shelterpl/cd_mambatt/runs/cd_mambatt_bestcfg_fd001_to_fd004_5seeds_fixcond/FD001_TO_FD004`
+- matched source-init control:
+  - `/home/shelterpl/cd_mambatt/runs/target_only_fewshot_controls/fd001tofd004_sourceinit5shot_matchv2_20260413/FD001_TO_FD004`
+- component re-add runs:
+  - MMD only:
+    `/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/fd001tofd004_mmdonly_matchv2_20260413/FD001_TO_FD004`
+  - source-stage only:
+    `/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/fd001tofd004_sourcestageonly_matchv2_20260413/FD001_TO_FD004`
+  - pseudo only:
+    `/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/fd001tofd004_pseudoonly_matchv2_20260413/FD001_TO_FD004`
+  - monotonic only:
+    `/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/fd001tofd004_monotoniconly_matchv2_20260413/FD001_TO_FD004`
+  - source-stage + pseudo:
+    `/home/shelterpl/cd_mambatt/runs/targeted_mechanism_experiments/fd001tofd004_stagepluspseudo_matchv2_20260413/FD001_TO_FD004`
+- controlled protocol:
+  - reuse the exact same source checkpoints
+  - reuse the exact same target few-shot partitions
+  - keep the same maintained `v2` target-stage recipe:
+    - `mamba_block_mode = bare`
+    - `transformer_norm_mode = pre`
+    - `target_lr = 5e-4`
+    - `target_epochs = 20`
+  - start from source-init-only supervised finetuning
+  - add back only one maintained component at a time, plus one targeted
+    `source-stage + pseudo` pairing to test whether pseudo-only weakness was
+    mainly due to the lack of a supervised stage head
+
+Aggregate comparison:
+
+| Setting | Mean test RMSE | Std | Delta vs source-init |
+|---|---:|---:|---:|
+| source-init-only supervised finetune | **23.8626** | 2.3242 | 0.0000 |
+| monotonic only | 24.0628 | 2.5583 | +0.2001 |
+| pseudo only | 24.0896 | 2.5804 | +0.2270 |
+| source-stage only | 24.1942 | 2.6613 | +0.3316 |
+| source-stage + pseudo | 24.1967 | 2.6726 | +0.3341 |
+| MMD only | 24.2065 | 2.6741 | +0.3438 |
+| full CD-MambAtt v2 | 24.3449 | 2.4762 | +0.4822 |
+
+- per-seed delta relative to source-init-only:
+  - seed `42`: every tested component regresses
+  - seed `43`: every tested component regresses
+  - seed `44`: every tested component improves
+  - seed `45`: only monotonic-only improves; the other maintained branches regress
+  - seed `46`: every tested component regresses, with pseudo-only the least harmful
+
+- evidence-supported conclusions:
+  - no isolated maintained loss component improves the `5`-seed mean over
+    simple source-initialized supervised finetuning on `FD001→FD004`
+  - among the tested single components, monotonic-only and pseudo-only are the
+    least harmful on the mean, while MMD-only and source-stage-only are
+    slightly more harmful
+  - adding source-stage supervision back on top of pseudo does **not** recover
+    the gap, so pseudo-only underperformance is **not** explained mainly by
+    the absence of a supervised stage head
+  - the seed ordering is highly stable across all variants:
+    - seed `44` remains the easiest
+    - seed `43` remains the hardest
+    - this means the current loss family mostly shifts the same partition
+      difficulty landscape instead of changing which target partitions are hard
+  - the full current CD pipeline helps only seed `44` and hurts seeds
+    `42, 43, 45, 46` relative to source-init-only in this matched comparison
+  - the narrower supported interpretation is therefore:
+    - the current `FD001→FD004` regression is **not** caused by one
+      catastrophic auxiliary term alone
+    - it is a distributed small-regression pattern across the present loss
+      family, with task / partition sensitivity still dominating
